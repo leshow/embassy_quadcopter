@@ -1,0 +1,24 @@
+[package]
+name = "drone_embassy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embassy-executor = "0.10"
+embassy-time = "0.5"
+esp-hal = { version = "1.1", features = ["esp32c3", "unstable"] }
+esp-rtos = { version = "0.3", features = ["esp32c3", "embassy"] }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32c3"] }
+esp-backtrace = { version = "0.19", features = [
+	"esp32c3",
+	"panic-handler",
+	"println",
+] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32c3", "jtag-serial"] }
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+# Needed to fit in RAM even in debug builds
+opt-level = "s"

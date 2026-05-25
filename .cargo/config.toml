@@ -1,0 +1,7 @@
+[target.'cfg(target_arch = "riscv32")']
+runner = "espflash flash --monitor"
+# To pin a specific port: runner = "espflash flash --monitor --port /dev/ttyUSB0"
+rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
+
+[build]
+target = "riscv32imc-unknown-none-elf"
