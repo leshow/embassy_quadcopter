@@ -16,6 +16,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
+    esp_println::logger::init_logger_from_env();
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -26,6 +27,11 @@ async fn main(_spawner: Spawner) {
 
     loop {
         led.toggle();
-        Timer::after(Duration::from_millis(500)).await;
+        if led.is_set_high() {
+            esp_println::println!("LED toggled on");
+        } else {
+            esp_println::println!("LED toggled off");
+        }
+        Timer::after(Duration::from_millis(5000)).await;
     }
 }
