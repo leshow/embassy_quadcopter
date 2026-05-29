@@ -14,9 +14,12 @@ esp-backtrace = { version = "0.19", features = [
 	"panic-handler",
 	"println",
 ] }
-esp-println = { version = "0.17", default-features = false, features = ["esp32c3", "jtag-serial", "log-04"] }
+esp-println = { version = "0.17", default-features = false, features = [
+	"esp32c3",
+	"jtag-serial",
+	"log-04",
+] }
 mpu9250-async = "0.1"
-embedded-hal-async = "1"
 
 [profile.release]
 opt-level = "s"

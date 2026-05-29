@@ -9,7 +9,7 @@ use esp_hal::{
     interrupt::software::SoftwareInterruptControl,
     timer::timg::TimerGroup,
 };
-use mpu9250_async::Mpu9250;
+use mpu9250_async::Mpu6050;
 
 use esp_backtrace as _;
 
@@ -24,7 +24,6 @@ async fn main(_spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    // Change GPIO8 to whichever pin your LED is wired to
     let mut led = gpio::Output::new(
         peripherals.GPIO8,
         gpio::Level::Low,
@@ -37,44 +36,27 @@ async fn main(_spawner: Spawner) {
         .with_scl(peripherals.GPIO21)
         .into_async();
 
-    let mut imu = match Mpu9250::new(i2c, Delay).await {
-        Ok(imu) => imu,
-        Err(e) => {
-            esp_println::println!("MPU9250 init failed: {:?}", e);
-            loop {
-                Timer::after(Duration::from_secs(1)).await;
-            }
-        }
-    };
+    let mut mpu = Mpu6050::new(i2c);
+    let mut delay = Delay;
 
-    esp_println::println!("MPU9250 initialized");
+    mpu.init(&mut delay).await.expect("MPU6050 init failed");
+    esp_println::println!("MPU6050 init OK");
+
     loop {
-        led.toggle();
-        if led.is_set_high() {
-            esp_println::println!("LED toggled on");
-        } else {
-            esp_println::println!("LED toggled off");
-        }
-        // GY-9250 wiring: SDA -> GPIO4, SCL -> GPIO5, VCC -> 3.3V, GND -> GND, ADO -> GND (addr 0x68)
-        match imu.get_all().await {
-            Ok(data) => {
+        match (mpu.get_acc().await, mpu.get_gyro().await) {
+            (Ok(acc), Ok(gyro)) => {
                 esp_println::println!(
-                    "accel x={:.3} y={:.3} z={:.3} g | gyro x={:.3} y={:.3} z={:.3} rad/s | mag x={:.1} y={:.1} z={:.1} uT",
-                    data.accel.x,
-                    data.accel.y,
-                    data.accel.z,
-                    data.gyro.x,
-                    data.gyro.y,
-                    data.gyro.z,
-                    data.mag.x,
-                    data.mag.y,
-                    data.mag.z,
+                    "acc: [{:.3}, {:.3}, {:.3}]  gyro: [{:.3}, {:.3}, {:.3}]",
+                    acc.x, acc.y, acc.z,
+                    gyro.x, gyro.y, gyro.z,
                 );
             }
-            Err(e) => {
-                esp_println::println!("sensor read error: {:?}", e);
-            }
+            (Err(e), _) => esp_println::println!("acc error: {:?}", e),
+            (_, Err(e)) => esp_println::println!("gyro error: {:?}", e),
         }
-        Timer::after(Duration::from_millis(1000)).await;
+
+        led.toggle();
+        Timer::after(Duration::from_millis(500)).await;
     }
 }
+

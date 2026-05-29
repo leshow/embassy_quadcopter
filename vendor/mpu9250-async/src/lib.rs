@@ -177,7 +177,11 @@ where
     /// against the known MPU6050 chip ID (0x68), not the I2C slave address.
     async fn verify(&mut self) -> Result<(), Mpu6050Error<E>> {
         let chip_id = self.read_byte(WHOAMI).await?;
-        if chip_id != MPU6050_WHOAMI {
+        if chip_id != MPU6050_WHOAMI
+            && chip_id != MPU9250_WHOAMI
+            && chip_id != MPU9255_WHOAMI
+            && chip_id != 0x70
+        {
             return Err(Mpu6050Error::InvalidChipId(chip_id));
         }
         Ok(())
