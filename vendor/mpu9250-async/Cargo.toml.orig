@@ -1,0 +1,21 @@
+[package]
+name = "mpu9250-async"
+version = "0.1.0"
+authors = ["LuMarans30"]
+edition = "2024"
+
+description = "Platform agnostic async driver for MPU9250 10DOF IMU"
+repository = "https://github.com/LuMarans30/mpu9250-async"
+readme = "README.md"
+keywords = ["mpu9250", "imu", "embedded"]
+license = "MIT"
+
+[dependencies]
+embassy-time = "0.5.1"
+embedded-hal-async = "^1.0.0"
+embedded-hal-bus = { version = "0.3.0", features = ["async"] }
+libm = "0.2.1"
+
+[dependencies.nalgebra]
+default-features = false
+version = "0.34.2"
