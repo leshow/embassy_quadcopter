@@ -2,7 +2,7 @@
 #![no_main]
 
 use embassy_executor::Spawner;
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::{Delay, Duration, Instant, Timer};
 use esp_hal::{
     gpio,
     i2c::master::{Config as I2cConfig, I2c},
@@ -15,6 +15,10 @@ use esp_backtrace as _;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
+const ALPHA: f32 = 0.98; // complementary filter: trust gyro 98%, accel 2%
+const FLAT_DEG: f32 = 10.0; // dead-zone around flat
+const STEEP_DEG: f32 = 50.0; // "both LEDs on" threshold
+
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
@@ -24,8 +28,23 @@ async fn main(_spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    let mut led = gpio::Output::new(
-        peripherals.GPIO8,
+    let mut led_fwd_pitch = gpio::Output::new(
+        peripherals.GPIO10,
+        gpio::Level::Low,
+        esp_hal::gpio::OutputConfig::default(),
+    );
+    let mut led_bwd_pitch = gpio::Output::new(
+        peripherals.GPIO9,
+        gpio::Level::Low,
+        esp_hal::gpio::OutputConfig::default(),
+    );
+    let mut led_fwd_roll = gpio::Output::new(
+        peripherals.GPIO0,
+        gpio::Level::Low,
+        esp_hal::gpio::OutputConfig::default(),
+    );
+    let mut led_bwd_roll = gpio::Output::new(
+        peripherals.GPIO1,
         gpio::Level::Low,
         esp_hal::gpio::OutputConfig::default(),
     );
@@ -38,25 +57,70 @@ async fn main(_spawner: Spawner) {
 
     let mut mpu = Mpu6050::new(i2c);
     let mut delay = Delay;
-
     mpu.init(&mut delay).await.expect("MPU6050 init failed");
     esp_println::println!("MPU6050 init OK");
 
+    let mut angle_pitch: f32 = 0.0; // rotation around Y axis (radians)
+    let mut angle_roll: f32 = 0.0; // rotation around X axis (radians)
+    let mut last = Instant::now();
+    let mut log_counter: u32 = 0;
+
     loop {
-        match (mpu.get_acc().await, mpu.get_gyro().await) {
-            (Ok(acc), Ok(gyro)) => {
-                esp_println::println!(
-                    "acc: [{:.3}, {:.3}, {:.3}]  gyro: [{:.3}, {:.3}, {:.3}]",
-                    acc.x, acc.y, acc.z,
-                    gyro.x, gyro.y, gyro.z,
-                );
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
+        last = now;
+
+        match (mpu.get_acc_angles().await, mpu.get_gyro().await) {
+            (Ok(angles), Ok(gyro)) => {
+                // angles[0] = roll  (rotation around X), angles[1] = pitch (rotation around Y)
+                // gyro.x = roll rate, gyro.y = pitch rate
+                angle_roll = ALPHA * (angle_roll + gyro.x * dt) + (1.0 - ALPHA) * angles[0];
+                angle_pitch = ALPHA * (angle_pitch + gyro.y * dt) + (1.0 - ALPHA) * angles[1];
+
+                let rad_to_deg = 180.0 / core::f32::consts::PI;
+                let roll_deg = angle_roll * rad_to_deg;
+                let pitch_deg = angle_pitch * rad_to_deg;
+
+                // set LEDS
+                {
+                    // LEDs show pitch (forward/backward tilt)
+                    let (fwd, bwd) = if pitch_deg.abs() > STEEP_DEG {
+                        (true, true)
+                    } else if pitch_deg > FLAT_DEG {
+                        (true, false)
+                    } else if pitch_deg < -FLAT_DEG {
+                        (false, true)
+                    } else {
+                        (false, false)
+                    };
+
+                    led_fwd_pitch.set_level(fwd.into());
+                    led_bwd_pitch.set_level(bwd.into());
+
+                    // LEDs show roll
+                    let (fwd, bwd) = if roll_deg.abs() > STEEP_DEG {
+                        (true, true)
+                    } else if roll_deg > FLAT_DEG {
+                        (true, false)
+                    } else if roll_deg < -FLAT_DEG {
+                        (false, true)
+                    } else {
+                        (false, false)
+                    };
+                    led_fwd_roll.set_level(fwd.into());
+                    led_bwd_roll.set_level(bwd.into());
+                }
+
+                log_counter += 1;
+                if log_counter >= 100 {
+                    log_counter = 0;
+                    esp_println::println!("roll: {:.1}°  pitch: {:.1}°", roll_deg, pitch_deg);
+                }
             }
             (Err(e), _) => esp_println::println!("acc error: {:?}", e),
             (_, Err(e)) => esp_println::println!("gyro error: {:?}", e),
         }
 
-        led.toggle();
-        Timer::after(Duration::from_millis(500)).await;
+        Timer::after(Duration::from_millis(5)).await; // ~200 Hz
     }
 }
-

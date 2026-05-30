@@ -259,6 +259,7 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "esp-rtos",
+ "libm",
  "mpu9250-async",
 ]
 
