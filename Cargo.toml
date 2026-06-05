@@ -19,8 +19,11 @@ esp-println = { version = "0.17", default-features = false, features = [
 	"jtag-serial",
 	"log-04",
 ] }
-mpu9250-async = "0.1"
+mpu9250-async = { version = "0.1", optional = true }
 libm = "0.2.16"
+
+[features]
+mpu6050 = ["dep:mpu9250-async"]
 
 [profile.release]
 opt-level = "s"

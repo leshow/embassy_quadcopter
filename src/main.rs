@@ -1,14 +1,16 @@
+#![allow(clippy::too_many_arguments)]
 #![no_std]
 #![no_main]
 
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Instant, Timer};
 use esp_hal::{
-    gpio,
+    Async, gpio,
     i2c::master::{Config as I2cConfig, I2c},
     interrupt::software::SoftwareInterruptControl,
     timer::timg::TimerGroup,
 };
+#[cfg(feature = "mpu6050")]
 use mpu9250_async::Mpu6050;
 
 use esp_backtrace as _;
@@ -49,16 +51,21 @@ async fn main(_spawner: Spawner) {
         esp_hal::gpio::OutputConfig::default(),
     );
 
+    #[cfg(feature = "mpu6050")]
     let i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
         .unwrap()
         .with_sda(peripherals.GPIO20)
         .with_scl(peripherals.GPIO21)
         .into_async();
 
-    let mut mpu = Mpu6050::new(i2c);
-    let mut delay = Delay;
-    mpu.init(&mut delay).await.expect("MPU6050 init failed");
-    esp_println::println!("MPU6050 init OK");
+    #[cfg(feature = "mpu6050")]
+    let mut mpu = {
+        let mut m = Mpu6050::new(i2c);
+        let mut delay = Delay;
+        m.init(&mut delay).await.expect("MPU6050 init failed");
+        esp_println::println!("MPU6050 init OK");
+        m
+    };
 
     let mut angle_pitch: f32 = 0.0; // rotation around Y axis (radians)
     let mut angle_roll: f32 = 0.0; // rotation around X axis (radians)
@@ -70,57 +77,109 @@ async fn main(_spawner: Spawner) {
         let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
         last = now;
 
-        match (mpu.get_acc_angles().await, mpu.get_gyro().await) {
-            (Ok(angles), Ok(gyro)) => {
-                // angles[0] = roll  (rotation around X), angles[1] = pitch (rotation around Y)
-                // gyro.x = roll rate, gyro.y = pitch rate
-                angle_roll = ALPHA * (angle_roll + gyro.x * dt) + (1.0 - ALPHA) * angles[0];
-                angle_pitch = ALPHA * (angle_pitch + gyro.y * dt) + (1.0 - ALPHA) * angles[1];
-
-                let rad_to_deg = 180.0 / core::f32::consts::PI;
-                let roll_deg = angle_roll * rad_to_deg;
-                let pitch_deg = angle_pitch * rad_to_deg;
-
-                // set LEDS
-                {
-                    // LEDs show pitch (forward/backward tilt)
-                    let (fwd, bwd) = if pitch_deg.abs() > STEEP_DEG {
-                        (true, true)
-                    } else if pitch_deg > FLAT_DEG {
-                        (true, false)
-                    } else if pitch_deg < -FLAT_DEG {
-                        (false, true)
-                    } else {
-                        (false, false)
-                    };
-
-                    led_fwd_pitch.set_level(fwd.into());
-                    led_bwd_pitch.set_level(bwd.into());
-
-                    // LEDs show roll
-                    let (fwd, bwd) = if roll_deg.abs() > STEEP_DEG {
-                        (true, true)
-                    } else if roll_deg > FLAT_DEG {
-                        (true, false)
-                    } else if roll_deg < -FLAT_DEG {
-                        (false, true)
-                    } else {
-                        (false, false)
-                    };
-                    led_fwd_roll.set_level(fwd.into());
-                    led_bwd_roll.set_level(bwd.into());
-                }
-
-                log_counter += 1;
-                if log_counter >= 100 {
-                    log_counter = 0;
-                    esp_println::println!("roll: {:.1}°  pitch: {:.1}°", roll_deg, pitch_deg);
-                }
+        #[cfg(feature = "mpu6050")]
+        if let Ok((roll_deg, pitch_deg)) = complementary_filter(
+            &mut mpu,
+            &mut angle_roll,
+            &mut angle_pitch,
+            dt,
+            &mut led_fwd_roll,
+            &mut led_bwd_roll,
+            &mut led_fwd_pitch,
+            &mut led_bwd_pitch,
+        )
+        .await
+        {
+            log_counter += 1;
+            if log_counter >= 100 {
+                log_counter = 0;
+                esp_println::println!("roll: {:.1}°  pitch: {:.1}°", roll_deg, pitch_deg);
             }
-            (Err(e), _) => esp_println::println!("acc error: {:?}", e),
-            (_, Err(e)) => esp_println::println!("gyro error: {:?}", e),
         }
 
         Timer::after(Duration::from_millis(5)).await; // ~200 Hz
     }
+}
+
+#[cfg(feature = "mpu6050")]
+async fn complementary_filter(
+    mpu: &mut Mpu6050<I2c<'_, Async>>,
+    angle_roll: &mut f32,
+    angle_pitch: &mut f32,
+    dt: f32,
+    led_fwd_roll: &mut gpio::Output<'_>,
+    led_bwd_roll: &mut gpio::Output<'_>,
+    led_fwd_pitch: &mut gpio::Output<'_>,
+    led_bwd_pitch: &mut gpio::Output<'_>,
+) -> Result<(f32, f32), ()> {
+    match (mpu.get_acc_angles().await, mpu.get_gyro().await) {
+        (Ok(angles), Ok(gyro)) => {
+            // angles[0] = roll  (rotation around X), angles[1] = pitch (rotation around Y)
+            // gyro.x = roll rate, gyro.y = pitch rate
+            *angle_roll = ALPHA * (*angle_roll + gyro.x * dt) + (1.0 - ALPHA) * angles[0];
+            *angle_pitch = ALPHA * (*angle_pitch + gyro.y * dt) + (1.0 - ALPHA) * angles[1];
+
+            let rad_to_deg = 180.0 / core::f32::consts::PI;
+            let roll_deg = *angle_roll * rad_to_deg;
+            let pitch_deg = *angle_pitch * rad_to_deg;
+
+            // set LEDS
+            {
+                set_lights(
+                    roll_deg,
+                    pitch_deg,
+                    led_fwd_roll,
+                    led_bwd_roll,
+                    led_fwd_pitch,
+                    led_bwd_pitch,
+                );
+            }
+            Ok((roll_deg, pitch_deg))
+        }
+        (Err(e), _) => {
+            esp_println::println!("acc error: {:?}", e);
+            Err(())
+        }
+        (_, Err(e)) => {
+            esp_println::println!("gyro error: {:?}", e);
+            Err(())
+        }
+    }
+}
+
+#[cfg(feature = "mpu6050")]
+fn set_lights(
+    roll_deg: f32,
+    pitch_deg: f32,
+    led_fwd_roll: &mut gpio::Output<'_>,
+    led_bwd_roll: &mut gpio::Output<'_>,
+    led_fwd_pitch: &mut gpio::Output<'_>,
+    led_bwd_pitch: &mut gpio::Output<'_>,
+) {
+    // LEDs show pitch (forward/backward tilt)
+    let (fwd, bwd) = if pitch_deg.abs() > STEEP_DEG {
+        (true, true)
+    } else if pitch_deg > FLAT_DEG {
+        (true, false)
+    } else if pitch_deg < -FLAT_DEG {
+        (false, true)
+    } else {
+        (false, false)
+    };
+
+    led_fwd_pitch.set_level(fwd.into());
+    led_bwd_pitch.set_level(bwd.into());
+
+    // LEDs show roll
+    let (fwd, bwd) = if roll_deg.abs() > STEEP_DEG {
+        (true, true)
+    } else if roll_deg > FLAT_DEG {
+        (true, false)
+    } else if roll_deg < -FLAT_DEG {
+        (false, true)
+    } else {
+        (false, false)
+    };
+    led_fwd_roll.set_level(fwd.into());
+    led_bwd_roll.set_level(bwd.into());
 }
