@@ -22,8 +22,9 @@ esp-println = { version = "0.17", default-features = false, features = [
 icm20948-rs = { version = "0.2", features = ["async"] }
 embedded-hal-async = "1.0"
 mpu9250-async = { version = "0.1", optional = true }
+ahrs = { version = "0.8", default-features = false, features = ["field_access"] }
 libm = "0.2.16"
-nalgebra = { version = "0.35.0", default-features = false }
+nalgebra = { version = "0.34", default-features = false, features = ["libm-force"] }
 
 [features]
 default = []

@@ -12,6 +12,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahrs"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4060d852f1a761d677c6f50499475735d8619f622a5d32b9fa8044e349827aef"
+dependencies = [
+ "nalgebra",
+ "num-traits",
+ "simba",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -355,6 +366,7 @@ dependencies = [
 name = "drone_embassy"
 version = "0.1.0"
 dependencies = [
+ "ahrs",
  "embassy-executor",
  "embassy-time",
  "embedded-hal-async",
@@ -1180,9 +1192,9 @@ dependencies = [
 
 [[package]]
 name = "nalgebra"
-version = "0.35.0"
+version = "0.34.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adc43a60c217b0c6ff46e47f26911015ad8d2e5a8be1af668c67e370d99a4346"
+checksum = "df76ea0ff5c7e6b88689085804d6132ded0ddb9de5ca5b8aeb9eeadc0508a70a"
 dependencies = [
  "approx",
  "num-complex",
@@ -1526,13 +1538,15 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "simba"
-version = "0.10.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f45c644a9f3a386f9288625d9f0c1e999e1acf07a37df35d0516c7f199d9cb2"
+checksum = "c99284beb21666094ba2b75bbceda012e610f5479dfcc2d6e2426f53197ffd95"
 dependencies = [
  "approx",
+ "libm",
  "num-complex",
  "num-traits",
+ "paste",
 ]
 
 [[package]]

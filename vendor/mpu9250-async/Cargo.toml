@@ -22,11 +22,7 @@ autotests = false
 autobenches = false
 description = "Platform agnostic async driver for MPU9250 10DOF IMU"
 readme = "README.md"
-keywords = [
-    "mpu9250",
-    "imu",
-    "embedded",
-]
+keywords = ["mpu9250", "imu", "embedded"]
 license = "MIT"
 repository = "https://github.com/LuMarans30/mpu9250-async"
 
@@ -48,5 +44,5 @@ features = ["async"]
 version = "0.2.1"
 
 [dependencies.nalgebra]
-version = "0.35"
+version = "0.34.2"
 default-features = false
