@@ -104,6 +104,51 @@ heavily on the gyro is preferred.
 
 ---
 
+## Madgwick Filter
+
+An alternative to the complementary filter. Instead of a simple weighted
+average, it uses a gradient-descent step to rotate a quaternion toward the
+accelerometer (and optionally magnetometer) reference each tick.
+
+**Parameters:**
+
+- **`beta` (β)** — how aggressively the filter corrects toward the
+  accelerometer. Higher = faster correction but more sensitive to vibration.
+  Lower = smoother but more gyro drift.
+
+  | β    | Character                                  |
+  | ---- | ------------------------------------------ |
+  | 0.01 | Very smooth; use with clean, low-vibe data |
+  | 0.1  | Good default for bench testing             |
+  | 0.3+ | Fast correction; motors will add noise     |
+
+  Start with `0.1`. Reduce if motor vibration is visible in the output.
+
+- **`sample_period`** — the filter constructor takes an initial estimate of
+  loop period in seconds. It is overwritten with the real measured `dt` on
+  every update call, so the initial value is a hint only. Set it to match your
+  target loop rate (e.g. `0.005` for 200 Hz).
+
+**`dt` and the main loop timer:**
+
+The main loop sleeps for 5 ms at the end of each tick:
+```rust
+Timer::after(Duration::from_millis(5)).await; // ~200 Hz
+```
+The actual elapsed time is measured with `Instant::now()` and passed to the
+filter as `dt` in seconds. This self-corrects for I²C latency and scheduling
+jitter — the filter always sees the real elapsed time regardless of what the
+timer was set to.
+
+**Yaw with Madgwick:**
+
+- With accelerometer + gyro only (`update_imu`): yaw is integrated from the
+  gyro and **will drift** over time. Fine for roll/pitch; do not rely on yaw.
+- With magnetometer added (`update`): yaw is corrected against magnetic north.
+  ICM-20948 supports this; MPU-6050 does not have a magnetometer.
+
+---
+
 ## Yaw from Magnetometer (ICM-20948 only)
 
 Raw magnetometer heading is computed as `atan2(-mag.y, mag.x)`, but this is
