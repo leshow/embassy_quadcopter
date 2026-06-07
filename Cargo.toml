@@ -19,11 +19,14 @@ esp-println = { version = "0.17", default-features = false, features = [
 	"jtag-serial",
 	"log-04",
 ] }
+icm20948-rs = { version = "0.2", features = ["async"] }
+embedded-hal-async = "1.0"
 mpu9250-async = { version = "0.1", optional = true }
 libm = "0.2.16"
+nalgebra = { version = "0.35.0", default-features = false }
 
 [features]
-mpu6050 = ["dep:mpu9250-async"]
+default = []
 
 [profile.release]
 opt-level = "s"

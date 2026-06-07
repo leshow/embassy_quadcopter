@@ -5,21 +5,26 @@
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Instant, Timer};
 use esp_hal::{
-    Async, gpio,
+    gpio,
     i2c::master::{Config as I2cConfig, I2c},
     interrupt::software::SoftwareInterruptControl,
     timer::timg::TimerGroup,
 };
-#[cfg(feature = "mpu6050")]
-use mpu9250_async::Mpu6050;
+
+// ICM20948 imports (default path)
+use icm20948::{I2cInterface, Icm20948Driver, MagConfig};
+
+// MPU6050
+// use mpu9250_async::Mpu6050;
 
 use esp_backtrace as _;
+use mpu9250_async::Mpu6050;
+use nalgebra::Vector3;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-const ALPHA: f32 = 0.98; // complementary filter: trust gyro 98%, accel 2%
-const FLAT_DEG: f32 = 10.0; // dead-zone around flat
-const STEEP_DEG: f32 = 50.0; // "both LEDs on" threshold
+mod fusion;
+use fusion::FusionBuilder;
 
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
@@ -51,24 +56,42 @@ async fn main(_spawner: Spawner) {
         esp_hal::gpio::OutputConfig::default(),
     );
 
-    #[cfg(feature = "mpu6050")]
+    let mut delay = Delay;
     let i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
         .unwrap()
         .with_sda(peripherals.GPIO20)
         .with_scl(peripherals.GPIO21)
         .into_async();
 
-    #[cfg(feature = "mpu6050")]
-    let mut mpu = {
-        let mut m = Mpu6050::new(i2c);
-        let mut delay = Delay;
-        m.init(&mut delay).await.expect("MPU6050 init failed");
-        esp_println::println!("MPU6050 init OK");
-        m
+    // ICM20948
+    let mut imu = {
+        // icm20948 requires CS to VIN to activate i2c
+        // CS to GND for SPI
+        let interface = I2cInterface::alternative(i2c);
+        let mut driver = Icm20948Driver::new(interface);
+        driver
+            .verify_who_am_i()
+            .await
+            .expect("ICM20948 WHO_AM_I failed");
+        driver.init(&mut delay).await.expect("ICM20948 init failed");
+        driver
+            .init_magnetometer(MagConfig::default(), &mut delay)
+            .await
+            .expect("ICM20948 mag init failed");
+        esp_println::println!("ICM20948 init OK");
+        driver
     };
 
-    let mut angle_pitch: f32 = 0.0; // rotation around Y axis (radians)
-    let mut angle_roll: f32 = 0.0; // rotation around X axis (radians)
+    // // mpu6050 (no magnetometer)
+    // let mut mpu = {
+    //     let mut m = Mpu6050::new(i2c);
+    //     m.init(&mut delay).await.expect("MPU6050 init failed");
+    //     esp_println::println!("MPU6050 init OK");
+    //     m
+    // };
+
+    let mut fusion = FusionBuilder::new().icm20948().complementary().build();
+    // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
     let mut last = Instant::now();
     let mut log_counter: u32 = 0;
 
@@ -77,77 +100,93 @@ async fn main(_spawner: Spawner) {
         let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
         last = now;
 
-        #[cfg(feature = "mpu6050")]
-        if let Ok((roll_deg, pitch_deg)) = complementary_filter(
-            &mut mpu,
-            &mut angle_roll,
-            &mut angle_pitch,
-            dt,
-            &mut led_fwd_roll,
-            &mut led_bwd_roll,
-            &mut led_fwd_pitch,
-            &mut led_bwd_pitch,
-        )
-        .await
-        {
-            log_counter += 1;
-            if log_counter >= 100 {
-                log_counter = 0;
-                esp_println::println!("roll: {:.1}°  pitch: {:.1}°", roll_deg, pitch_deg);
+        // --- ICM20948 loop body ---
+        match icm20948_read(&mut imu).await {
+            Ok((a, g, m)) => {
+                let (roll_deg, pitch_deg, yaw_deg) = fusion.update(dt, a, g, m);
+
+                set_lights(
+                    roll_deg,
+                    pitch_deg,
+                    &mut led_fwd_roll,
+                    &mut led_bwd_roll,
+                    &mut led_fwd_pitch,
+                    &mut led_bwd_pitch,
+                );
+
+                log_counter += 1;
+                if log_counter >= 100 {
+                    log_counter = 0;
+                    esp_println::println!(
+                        "roll: {:.1}\u{b0}  pitch: {:.1}\u{b0}  yaw: {:.1}\u{b0}",
+                        roll_deg,
+                        pitch_deg,
+                        yaw_deg
+                    );
+                }
             }
+            Err(e) => esp_println::println!("imu error: {:?}", e),
         }
+
+        // --- MPU6050 loop body ---
+        // match mpu6050_read(&mut mpu).await {
+        //     Ok((a_angles, g)) => {
+        //         let (roll_deg, pitch_deg) = fusion.update(dt, a_angles, g);
+        //         set_lights(
+        //             roll_deg,
+        //             pitch_deg,
+        //             &mut led_fwd_roll,
+        //             &mut led_bwd_roll,
+        //             &mut led_fwd_pitch,
+        //             &mut led_bwd_pitch,
+        //         );
+
+        //         log_counter += 1;
+        //         if log_counter >= 100 {
+        //             log_counter = 0;
+        //             esp_println::println!(
+        //                 "roll: {:.1}\u{b0}  pitch: {:.1}\u{b0}",
+        //                 roll_deg,
+        //                 pitch_deg,
+        //             );
+        //         }
+        //     }
+        // }
 
         Timer::after(Duration::from_millis(5)).await; // ~200 Hz
     }
 }
 
-#[cfg(feature = "mpu6050")]
-async fn complementary_filter(
-    mpu: &mut Mpu6050<I2c<'_, Async>>,
-    angle_roll: &mut f32,
-    angle_pitch: &mut f32,
-    dt: f32,
-    led_fwd_roll: &mut gpio::Output<'_>,
-    led_bwd_roll: &mut gpio::Output<'_>,
-    led_fwd_pitch: &mut gpio::Output<'_>,
-    led_bwd_pitch: &mut gpio::Output<'_>,
-) -> Result<(f32, f32), ()> {
-    match (mpu.get_acc_angles().await, mpu.get_gyro().await) {
-        (Ok(angles), Ok(gyro)) => {
-            // angles[0] = roll  (rotation around X), angles[1] = pitch (rotation around Y)
-            // gyro.x = roll rate, gyro.y = pitch rate
-            *angle_roll = ALPHA * (*angle_roll + gyro.x * dt) + (1.0 - ALPHA) * angles[0];
-            *angle_pitch = ALPHA * (*angle_pitch + gyro.y * dt) + (1.0 - ALPHA) * angles[1];
-
-            let rad_to_deg = 180.0 / core::f32::consts::PI;
-            let roll_deg = *angle_roll * rad_to_deg;
-            let pitch_deg = *angle_pitch * rad_to_deg;
-
-            // set LEDS
-            {
-                set_lights(
-                    roll_deg,
-                    pitch_deg,
-                    led_fwd_roll,
-                    led_bwd_roll,
-                    led_fwd_pitch,
-                    led_bwd_pitch,
-                );
-            }
-            Ok((roll_deg, pitch_deg))
-        }
-        (Err(e), _) => {
-            esp_println::println!("acc error: {:?}", e);
-            Err(())
-        }
-        (_, Err(e)) => {
-            esp_println::println!("gyro error: {:?}", e);
-            Err(())
-        }
-    }
+// Reads raw sensor values from the ICM20948.
+// Returns (ax, ay, az, gx, gy, mx, my, mz) as plain f32 so the caller
+// owns all filter state and LED logic — no generic trait bounds needed.
+async fn icm20948_read<I>(
+    imu: &mut Icm20948Driver<I2cInterface<I>>,
+) -> Result<(Vector3<f32>, Vector3<f32>, Vector3<f32>), icm20948::Error<I::Error>>
+where
+    I: embedded_hal_async::i2c::I2c,
+{
+    let acc = imu.read_accelerometer().await?;
+    let gyro = imu.read_gyroscope_radians().await?;
+    let mag = imu.read_magnetometer().await?;
+    Ok((
+        Vector3::new(acc.x, acc.y, acc.z),
+        Vector3::new(gyro.x, gyro.y, gyro.z),
+        Vector3::new(mag.x, mag.y, mag.z),
+    ))
 }
 
-#[cfg(feature = "mpu6050")]
+async fn mpu6050_read<I>(
+    mpu: &mut Mpu6050<I>,
+) -> Result<(nalgebra::Vector2<f32>, Vector3<f32>), mpu9250_async::Mpu6050Error<I::Error>>
+where
+    I: embedded_hal_async::i2c::I2c,
+{
+    let angles = mpu.get_acc_angles().await?;
+    let gyro = mpu.get_gyro().await?;
+    Ok((angles, gyro))
+}
+
 fn set_lights(
     roll_deg: f32,
     pitch_deg: f32,
@@ -157,11 +196,11 @@ fn set_lights(
     led_bwd_pitch: &mut gpio::Output<'_>,
 ) {
     // LEDs show pitch (forward/backward tilt)
-    let (fwd, bwd) = if pitch_deg.abs() > STEEP_DEG {
+    let (fwd, bwd) = if pitch_deg.abs() > fusion::STEEP_DEG {
         (true, true)
-    } else if pitch_deg > FLAT_DEG {
+    } else if pitch_deg > fusion::FLAT_DEG {
         (true, false)
-    } else if pitch_deg < -FLAT_DEG {
+    } else if pitch_deg < -fusion::FLAT_DEG {
         (false, true)
     } else {
         (false, false)
@@ -171,11 +210,11 @@ fn set_lights(
     led_bwd_pitch.set_level(bwd.into());
 
     // LEDs show roll
-    let (fwd, bwd) = if roll_deg.abs() > STEEP_DEG {
+    let (fwd, bwd) = if roll_deg.abs() > fusion::STEEP_DEG {
         (true, true)
-    } else if roll_deg > FLAT_DEG {
+    } else if roll_deg > fusion::FLAT_DEG {
         (true, false)
-    } else if roll_deg < -FLAT_DEG {
+    } else if roll_deg < -fusion::FLAT_DEG {
         (false, true)
     } else {
         (false, false)
