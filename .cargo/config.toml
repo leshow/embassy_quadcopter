@@ -5,3 +5,11 @@ rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
 
 [build]
 target = "riscv32imc-unknown-none-elf"
+
+[alias]
+# C3 (default — plain cargo build/run also works)
+build-c3 = "build"
+flash-c3 = "run"
+# C6
+build-c6 = "build --no-default-features --features chip-c6 --target riscv32imac-unknown-none-elf"
+flash-c6 = "run --no-default-features --features chip-c6 --target riscv32imac-unknown-none-elf"

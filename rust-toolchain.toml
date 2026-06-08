@@ -1,3 +1,4 @@
 [toolchain]
 channel = "stable"
-targets = ["riscv32imc-unknown-none-elf"]
+# imac adds atomic extensions to risc
+targets = ["riscv32imc-unknown-none-elf", "riscv32imac-unknown-none-elf"]

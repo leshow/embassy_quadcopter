@@ -50,7 +50,9 @@ pub struct NoSensor;
 pub struct NoFilter;
 // Builder
 pub struct FusionBuilder<S, F> {
+    // alpha only matters for complementary filter
     alpha: f32,
+    // used in madgwick
     beta: f32,
     sample_period: f32,
     _sensor: PhantomData<S>,
@@ -117,7 +119,7 @@ impl<S> FusionBuilder<S, NoFilter> {
 
 // Alpha tuning — complementary filter only
 impl<S> FusionBuilder<S, Complementary> {
-    pub fn with_alpha(mut self, alpha: f32) -> Self {
+    pub fn alpha(mut self, alpha: f32) -> Self {
         self.alpha = alpha;
         self
     }
@@ -125,12 +127,12 @@ impl<S> FusionBuilder<S, Complementary> {
 
 // Madgwick tuning
 impl<S> FusionBuilder<S, Madgwick> {
-    pub fn with_beta(mut self, beta: f32) -> Self {
+    pub fn beta(mut self, beta: f32) -> Self {
         self.beta = beta;
         self
     }
 
-    pub fn with_sample_period(mut self, sample_period: f32) -> Self {
+    pub fn sample_period(mut self, sample_period: f32) -> Self {
         self.sample_period = sample_period;
         self
     }
@@ -247,9 +249,15 @@ impl Fusion<MPU6050, Complementary> {
 impl Fusion<ICM20948, Madgwick> {
     /// 9DOF Madgwick MARG via the `ahrs` crate.
     /// Returns (roll_deg, pitch_deg, yaw_deg).
-    pub fn update(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> Option<(f32, f32, f32)> {
+    pub fn update(
+        &mut self,
+        dt: f32,
+        a: Vector3<f32>,
+        g: Vector3<f32>,
+        m: Vector3<f32>,
+    ) -> Option<(f32, f32, f32)> {
         *self.filter.inner.sample_period_mut() = dt;
-        match self.filter.inner.update_imu(&g, &a) {
+        match self.filter.inner.update(&g, &a, &m) {
             Ok(quat) => {
                 let (roll, pitch, yaw) = quat.euler_angles();
                 Some((roll * RAD_TO_DEG, pitch * RAD_TO_DEG, yaw * RAD_TO_DEG))

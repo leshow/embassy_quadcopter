@@ -6,28 +6,41 @@ edition = "2024"
 [dependencies]
 embassy-executor = "0.10"
 embassy-time = "0.5"
-esp-hal = { version = "1.1", features = ["esp32c3", "unstable"] }
-esp-rtos = { version = "0.3", features = ["esp32c3", "embassy"] }
-esp-bootloader-esp-idf = { version = "0.5", features = ["esp32c3"] }
-esp-backtrace = { version = "0.19", features = [
-	"esp32c3",
-	"panic-handler",
-	"println",
-] }
+esp-hal = { version = "1.1", features = ["unstable"] }
+esp-rtos = { version = "0.3", features = ["embassy"] }
+esp-bootloader-esp-idf = { version = "0.5" }
+esp-backtrace = { version = "0.19", features = ["panic-handler", "println"] }
 esp-println = { version = "0.17", default-features = false, features = [
-	"esp32c3",
 	"jtag-serial",
 	"log-04",
 ] }
 icm20948-rs = { version = "0.2", features = ["async"] }
 embedded-hal-async = "1.0"
-mpu9250-async = { version = "0.1", optional = true }
-ahrs = { version = "0.8", default-features = false, features = ["field_access"] }
+mpu9250-async = { version = "0.1" }
+ahrs = { version = "0.8", default-features = false, features = [
+	"field_access",
+] }
 libm = "0.2.16"
-nalgebra = { version = "0.34", default-features = false, features = ["libm-force"] }
+nalgebra = { version = "0.34", default-features = false, features = [
+	"libm-force",
+] }
 
 [features]
-default = []
+default = ["chip-c3"]
+chip-c3 = [
+	"esp-hal/esp32c3",
+	"esp-rtos/esp32c3",
+	"esp-bootloader-esp-idf/esp32c3",
+	"esp-backtrace/esp32c3",
+	"esp-println/esp32c3",
+]
+chip-c6 = [
+	"esp-hal/esp32c6",
+	"esp-rtos/esp32c6",
+	"esp-bootloader-esp-idf/esp32c6",
+	"esp-backtrace/esp32c6",
+	"esp-println/esp32c6",
+]
 
 [profile.release]
 opt-level = "s"
