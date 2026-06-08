@@ -1,4 +1,3 @@
-use embassy_time::{Duration, Timer};
 use embedded_hal_async::i2c::I2c;
 use icm20948::{I2cInterface, Icm20948Driver, MagConfig};
 use mpu9250_async::{Mpu6050, Mpu6050Error};
@@ -17,17 +16,17 @@ pub trait ImuReadMag: ImuRead {
 }
 
 pub struct Sensor<D> {
-    pub driver: D,
+    driver: D,
 }
 
 // MPU6050 (6DOF, no mag) ---
 
 impl<I: I2c> Sensor<Mpu6050<I>> {
     pub async fn init_mpu6050(i2c: I) -> Result<Self, Mpu6050Error<I::Error>> {
-        let mut m = Mpu6050::new(i2c);
-        m.init(&mut embassy_time::Delay).await?;
+        let mut driver = Mpu6050::new(i2c);
+        driver.init(&mut embassy_time::Delay).await?;
         esp_println::println!("MPU6050 init OK");
-        Ok(Self { driver: m })
+        Ok(Self { driver })
     }
 }
 
@@ -50,30 +49,19 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
         driver.verify_who_am_i().await?;
         driver.init(&mut embassy_time::Delay).await?;
 
-        const MAG_RETRIES: u8 = 3;
-        let mut last_err = None;
-        for attempt in 1..=MAG_RETRIES {
-            match driver
-                .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)
-                .await
-            {
-                Ok(_) => {
-                    esp_println::println!("ICM20948 init OK (mag enabled)");
-                    return Ok(Self { driver });
-                }
-                Err(e) => {
-                    esp_println::println!(
-                        "mag init attempt {}/{} failed: {:?}",
-                        attempt,
-                        MAG_RETRIES,
-                        e
-                    );
-                    last_err = Some(e);
-                    Timer::after(Duration::from_millis(50)).await;
-                }
+        match driver
+            .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)
+            .await
+        {
+            Ok(_) => {
+                esp_println::println!("ICM20948 init OK (mag enabled)");
+                Ok(Self { driver })
+            }
+            Err(e) => {
+                esp_println::println!("error during init_icm20948 {:?}", e,);
+                Err(e)
             }
         }
-        Err(last_err.unwrap())
     }
 }
 

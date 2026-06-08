@@ -3,18 +3,14 @@
 #![no_main]
 
 use embassy_executor::Spawner;
-use embassy_time::{Delay, Duration, Instant, Timer};
+use embassy_time::{Duration, Instant, Timer};
+use esp_backtrace as _;
 use esp_hal::{
     gpio,
     i2c::master::{Config as I2cConfig, I2c},
     interrupt::software::SoftwareInterruptControl,
     timer::timg::TimerGroup,
 };
-
-// ICM20948 imports (default path)
-use icm20948::{I2cInterface, Icm20948Driver, MagConfig};
-
-use esp_backtrace as _;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
