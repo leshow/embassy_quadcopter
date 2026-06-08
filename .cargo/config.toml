@@ -13,3 +13,6 @@ flash-c3 = "run"
 # C6
 build-c6 = "build --no-default-features --features chip-c6 --target riscv32imac-unknown-none-elf"
 flash-c6 = "run --no-default-features --features chip-c6 --target riscv32imac-unknown-none-elf"
+
+[env]
+ESP_LOG = "info"

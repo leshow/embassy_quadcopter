@@ -132,9 +132,11 @@ accelerometer (and optionally magnetometer) reference each tick.
 **`dt` and the main loop timer:**
 
 The main loop sleeps for 5 ms at the end of each tick:
+
 ```rust
 Timer::after(Duration::from_millis(5)).await; // ~200 Hz
 ```
+
 The actual elapsed time is measured with `Instant::now()` and passed to the
 filter as `dt` in seconds. This self-corrects for I²C latency and scheduling
 jitter — the filter always sees the real elapsed time regardless of what the

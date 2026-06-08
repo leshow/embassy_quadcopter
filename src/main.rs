@@ -26,7 +26,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 mod fusion;
 use fusion::FusionBuilder;
 
-const LOOP_PERIOD_MS: u64 = 5; // target loop rate; shared by timer and Madgwick sample_period
+const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
 
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {

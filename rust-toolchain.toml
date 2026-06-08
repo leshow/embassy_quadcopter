@@ -1,4 +1,10 @@
 [toolchain]
+# stable covers all RISC-V targets (C3, C6).
+# S3 (Xtensa) requires channel = "esp" — use a subdirectory with its own
+# rust-toolchain.toml rather than switching this file.
 channel = "stable"
-# imac adds atomic extensions to risc
-targets = ["riscv32imc-unknown-none-elf", "riscv32imac-unknown-none-elf"]
+components = ["rustfmt", "clippy"]
+targets = [
+	"riscv32imc-unknown-none-elf",  # ESP32-C3
+	"riscv32imac-unknown-none-elf", # ESP32-C6
+]

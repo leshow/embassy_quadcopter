@@ -12,10 +12,13 @@ esp-bootloader-esp-idf = { version = "0.5" }
 esp-backtrace = { version = "0.19", features = ["panic-handler", "println"] }
 esp-println = { version = "0.17", default-features = false, features = [
 	"jtag-serial",
-	"log-04",
+	"log-04",      # switch to defmt-espflash for deferred logging
 ] }
-icm20948-rs = { version = "0.2", features = ["async"] }
 embedded-hal-async = "1.0"
+# esp-radio = { version = "0.18.0" }
+# esp-alloc = { version = "0.10.0" }
+# external non-embassy/hal libs
+icm20948-rs = { version = "0.2", features = ["async"] }
 mpu9250-async = { version = "0.1" }
 ahrs = { version = "0.8", default-features = false, features = [
 	"field_access",
