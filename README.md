@@ -1,6 +1,6 @@
-# embassy drone esp32-c3 (WIP)
+# mini quadcopter in Rust w/ embassy for esp32-c3 (WIP)
 
-currently still a work in progress, building a (very) mini quadcopter for esp32. right now using the esp32-c3 supermini, I may upgrade this to the s3 if the extra core is necessary.
+currently still a work in progress, building a (very) mini quadcopter for esp32 on bare metal with [embassy.dev](https://embassy.dev). right now using the esp32-c3 supermini, I may upgrade this to the s3 if the extra core is necessary.
 
 ## Quad assets
 
