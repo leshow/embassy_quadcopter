@@ -29,15 +29,15 @@ nalgebra = { version = "0.34", default-features = false, features = [
 ] }
 
 [features]
-default = ["chip-c3"]
-chip-c3 = [
+default = ["c3"]
+c3 = [
 	"esp-hal/esp32c3",
 	"esp-rtos/esp32c3",
 	"esp-bootloader-esp-idf/esp32c3",
 	"esp-backtrace/esp32c3",
 	"esp-println/esp32c3",
 ]
-chip-c6 = [
+c6 = [
 	"esp-hal/esp32c6",
 	"esp-rtos/esp32c6",
 	"esp-bootloader-esp-idf/esp32c6",
