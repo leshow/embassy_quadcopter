@@ -82,6 +82,16 @@ cargo run   --no-default-features --features c6 --target riscv32imac-unknown-non
 ESP_LOG=debug cargo flash-c3
 ```
 
+## Visualizer
+
+to see a 3d rendering of the orientation run:
+
+```bash
+LOG_RATE_MS=1 cargo flash-c3 2>&1 | (cd visualizer && cargo run)
+```
+
+It feeds the esp32 log output to a binary reading stdin and rendering a cube on screen
+
 ## LLM usage
 
 Docs and tests are sometimes generated with the use of LLMs, along with explanation/discovery, but the purpose of this project is to actually learn, so the code is still written by a human.
