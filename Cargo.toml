@@ -1,3 +1,6 @@
+[workspace]
+exclude = ["visualizer"]
+
 [package]
 name = "drone_embassy"
 version = "0.1.0"

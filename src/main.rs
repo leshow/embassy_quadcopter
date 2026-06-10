@@ -22,6 +22,28 @@ use crate::sensors::{ImuReadMag, Sensor};
 
 const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
 
+/// How many loop iterations to skip between log lines.
+/// Override at build time: `LOG_RATE_MS=200 cargo flash-c3` (default: 500 ms).
+const LOG_EVERY_N: u32 = {
+    const fn parse_u64(s: &str) -> u64 {
+        // unfortunately parse is not a const fn
+        let b = s.as_bytes();
+        let mut n = 0u64;
+        let mut i = 0;
+        // no for loops in const either? damn.
+        while i < b.len() {
+            n = n * 10 + (b[i] - b'0') as u64;
+            i += 1;
+        }
+        n
+    }
+    let ms = match option_env!("LOG_RATE_MS") {
+        Some(s) => parse_u64(s),
+        None => 500,
+    };
+    (ms / LOOP_PERIOD_MS) as u32
+};
+
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
@@ -92,7 +114,7 @@ async fn main(_spawner: Spawner) {
                 );
 
                 log_counter += 1;
-                if log_counter >= 100 {
+                if log_counter >= LOG_EVERY_N {
                     log_counter = 0;
                     esp_println::println!(
                         "roll: {:.1}\u{b0}  pitch: {:.1}\u{b0}  yaw: {:.1}\u{b0}",
