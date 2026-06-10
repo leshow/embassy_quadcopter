@@ -44,5 +44,5 @@ features = ["async"]
 version = "0.2.1"
 
 [dependencies.nalgebra]
-version = "0.34.2"
+version = "0.35"
 default-features = false

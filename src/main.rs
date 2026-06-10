@@ -87,8 +87,8 @@ async fn main(_spawner: Spawner) {
 
     let mut fusion = FusionBuilder::new()
         .icm20948()
+        // .vqf()
         .madgwick()
-        .sample_period(LOOP_PERIOD_MS as f32 / 1000.0)
         .build();
     // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
     let mut last = Instant::now();
@@ -102,7 +102,11 @@ async fn main(_spawner: Spawner) {
         // --- ICM20948 loop body ---
         match sensor.read_mag().await {
             Ok((a, g, m)) => {
-                let (roll_deg, pitch_deg, yaw_deg) = fusion.update(dt, a, g, m).unwrap();
+                let quat = fusion.update(dt, a, g, m);
+                let (roll_rad, pitch_rad, yaw_rad) = quat.euler_angles();
+                let roll_deg = roll_rad * fusion::RAD_TO_DEG;
+                let pitch_deg = pitch_rad * fusion::RAD_TO_DEG;
+                let yaw_deg = yaw_rad * fusion::RAD_TO_DEG;
 
                 set_lights(
                     roll_deg,
