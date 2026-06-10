@@ -32,13 +32,13 @@ Currently only building on the c3 and c6. I'll try the s3 if I have time to atte
 
 ### Other Components
 
-| Part                   | Qty | Notes                                         |          |
-| ---------------------- | --- | --------------------------------------------- | -------- |
-| Brushless motors (1S)  | 4   | 8520 DC motor                                 |          |
-| mosfet 100N03A         | 4   | One per motor                                 |          |
-| 1S LiPo battery (3.7v) | 1   | 3.7v 600mah battery 503040                    |          |
-| Propeller              | 4   | 55 or 65mm                                    |          |
-| 3D printed frame       | 1   | STL/3MF files in `stl/` — designed in OnShape | ## Build |
+| Part                   | Qty | Notes                                         | 
+| ---------------------- | --- | --------------------------------------------- | 
+| Brushless motors (1S)  | 4   | 8520 DC motor                                 | 
+| mosfet 100N03A         | 4   | One per motor                                 | 
+| 1S LiPo battery (3.7v) | 1   | 3.7v 600mah battery 503040                    | 
+| Propeller              | 4   | 55 or 65mm                                    | 
+| 3D printed frame       | 1   | STL/3MF files in `stl/` — designed in OnShape | 
 
 Requires [espflash](https://github.com/esp-rs/espflash) for flashing (`cargo install espflash`).
 
