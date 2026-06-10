@@ -32,7 +32,7 @@ Currently only building on the c3 and c6. I'll try the s3 if I have time to atte
 
 ### Other Components
 
-| Part                   | Qty | Notes                                         |
+| Part                   | Qty | Notes                                         |          |
 | ---------------------- | --- | --------------------------------------------- | -------- |
 | Brushless motors (1S)  | 4   | 8520 DC motor                                 |          |
 | mosfet 100N03A         | 4   | One per motor                                 |          |
