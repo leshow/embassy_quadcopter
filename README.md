@@ -6,7 +6,7 @@ currently still a work in progress, building a (very) mini quadcopter for esp32 
 
 ![drone frame](/images/assembly.png)
 
-The frame stl & 3mf files are in the `stl/` dir and can be used to 3d print the drone. I created them in OnShape. For the battery compartment, I opted for a friction fit with pegs that you can also glue in. This got around some issues with printing supports that were a pain to remove.
+The frame stl & 3mf files are in the `stl/` dir and can be used to 3d print the frame. I created them in OnShape. For the battery compartment, I opted for a friction fit with pegs that you can also glue in. This got around some issues with printing supports that were a pain to remove.
 
 There's a top stand that serves as a mount for the microcontroller and MPU6050 or ICM20948. I'll include a full parts list as the project progresses.
 
@@ -34,7 +34,7 @@ Currently only building on the c3 and c6. I'll try the s3 if I have time to atte
 
 | Part                   | Qty | Notes                                         | 
 | ---------------------- | --- | --------------------------------------------- | 
-| Brushless motors (1S)  | 4   | 8520 DC motor                                 | 
+| 8520 brushed motor     | 4   | find it on aliexpress like everything else    | 
 | mosfet 100N03A         | 4   | One per motor                                 | 
 | 1S LiPo battery (3.7v) | 1   | 3.7v 600mah battery 503040                    | 
 | Propeller              | 4   | 55 or 65mm                                    | 
