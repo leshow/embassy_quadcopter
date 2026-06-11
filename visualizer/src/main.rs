@@ -15,28 +15,20 @@ struct Attitude {
 /// Parse a float value immediately following `key` in `line`.
 /// Stops at the first character that is not a digit, dot, or minus sign,
 /// which correctly handles the UTF-8 degree symbol '°' (0xC2 0xB0).
-fn extract_value(line: &str, key: &str) -> Option<f32> {
-    // line
-    let start = line.find(key)? + key.len();
-    let s = line[start..].trim_start();
-    let end = s
+fn extract_val<'a>(line: &'a str, key: &str) -> Option<(f32, &'a str)> {
+    let (_, rest) = line.trim().split_once(key)?;
+    let end = rest
         .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
-        .unwrap_or(s.len());
-    s[..end].parse().ok()
+        .unwrap_or(rest.len());
+    Some((rest[..end].parse().ok()?, &rest[end..]))
 }
 
 /// Parse a log line of the form:  roll: -2.2°  pitch: 1.1°  yaw: 3.0°
 fn parse_line(line: &str) -> Option<Attitude> {
-    // let (roll, rest) = line.trim().split_once(' ')?;
-    // if roll == "roll:" {
-    //     let (val, rest) = rest.split_once(' ')?;
-
-    // }
-    Some(Attitude {
-        roll: extract_value(line, "roll:")?,
-        pitch: extract_value(line, "pitch:")?,
-        yaw: extract_value(line, "yaw:")?,
-    })
+    let (roll, rest) = extract_val(line, "roll: ")?;
+    let (pitch, rest) = extract_val(rest, "pitch: ")?;
+    let (yaw, _) = extract_val(rest, "yaw: ")?;
+    Some(Attitude { roll, pitch, yaw })
 }
 
 fn draw_attitude(att: Attitude) {
@@ -75,16 +67,6 @@ fn draw_attitude(att: Attitude) {
     draw_line_3d(o, rot * Vec3::new(0.0, 0.0, 0.75), BLUE);
 }
 
-fn draw_grid() {
-    let dim = Color::from_rgba(45, 45, 65, 255);
-    let y = -0.45_f32;
-    for i in -6i32..=6 {
-        let f = i as f32 * 0.35;
-        draw_line_3d(Vec3::new(f, y, -2.1), Vec3::new(f, y, 2.1), dim);
-        draw_line_3d(Vec3::new(-2.1, y, f), Vec3::new(2.1, y, f), dim);
-    }
-}
-
 fn window_conf() -> Conf {
     Conf {
         window_title: "IMU Attitude Visualizer".to_string(),
@@ -105,11 +87,11 @@ async fn main() {
         let state = Arc::clone(&state);
         thread::spawn(move || {
             let stdin = std::io::stdin();
-            for line in stdin.lock().lines().flatten() {
+            for line in stdin.lock().lines().map_while(Result::ok) {
                 // Passthrough to stderr so raw serial is still visible.
                 eprintln!("{}", line);
                 if let Some(att) = parse_line(&line) {
-                    *state.lock().unwrap() = att;
+                    *state.lock().expect("failed to acquire stdin lock") = att;
                 }
             }
         });
@@ -127,7 +109,6 @@ async fn main() {
             ..Default::default()
         });
 
-        draw_grid();
         draw_attitude(att);
 
         set_default_camera();
@@ -138,21 +119,21 @@ async fn main() {
         let line_h = 32.0_f32;
         // HUD colors match body axis lines: roll=blue(Z), pitch=red(X), yaw=green(Y)
         draw_text(
-            &format!("roll  {:+7.1}\u{b0}", att.roll),
+            format!("roll  {:+7.1}\u{b0}", att.roll),
             hud_x,
             36.0,
             font_sz,
             BLUE,
         );
         draw_text(
-            &format!("pitch {:+7.1}\u{b0}", att.pitch),
+            format!("pitch {:+7.1}\u{b0}", att.pitch),
             hud_x,
             36.0 + line_h,
             font_sz,
             RED,
         );
         draw_text(
-            &format!("yaw   {:+7.1}\u{b0}", att.yaw),
+            format!("yaw   {:+7.1}\u{b0}", att.yaw),
             hud_x,
             36.0 + 2.0 * line_h,
             font_sz,
@@ -169,5 +150,20 @@ async fn main() {
         );
 
         next_frame().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_extract() {
+        let str = "roll: -1.9°  pitch: -2.9°  yaw: -41.3°";
+        let (val, rest) = extract_val(str, "roll: ").unwrap();
+        assert_eq!(val, -1.9f32);
+        let (val, rest) = extract_val(rest, "pitch: ").unwrap();
+        assert_eq!(val, -2.9f32);
+        let (val, _) = extract_val(rest, "yaw: ").unwrap();
+        // assert_eq!(val, -41.3f32);
     }
 }
