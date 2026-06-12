@@ -1,6 +1,8 @@
+use anyhow::Context;
 use macroquad::prelude::*;
 use std::{
     io::BufRead,
+    str::FromStr,
     sync::{Arc, Mutex},
     thread,
 };
@@ -12,6 +14,17 @@ struct Attitude {
     yaw: f32,
 }
 
+impl FromStr for Attitude {
+    type Err = anyhow::Error;
+
+    fn from_str(line: &str) -> Result<Self, Self::Err> {
+        let (roll, rest) = extract_val(line, "roll: ").context("failed to parse roll")?;
+        let (pitch, rest) = extract_val(rest, "pitch: ").context("failed to parse pitch")?;
+        let (yaw, _) = extract_val(rest, "yaw: ").context("failed to parse yaw")?;
+        Ok(Attitude { roll, pitch, yaw })
+    }
+}
+
 /// Parse a float value immediately following `key` in `line`.
 /// Stops at the first character that is not a digit, dot, or minus sign,
 /// which correctly handles the UTF-8 degree symbol '°' (0xC2 0xB0).
@@ -21,14 +34,6 @@ fn extract_val<'a>(line: &'a str, key: &str) -> Option<(f32, &'a str)> {
         .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
         .unwrap_or(rest.len());
     Some((rest[..end].parse().ok()?, &rest[end..]))
-}
-
-/// Parse a log line of the form:  roll: -2.2°  pitch: 1.1°  yaw: 3.0°
-fn parse_line(line: &str) -> Option<Attitude> {
-    let (roll, rest) = extract_val(line, "roll: ")?;
-    let (pitch, rest) = extract_val(rest, "pitch: ")?;
-    let (yaw, _) = extract_val(rest, "yaw: ")?;
-    Some(Attitude { roll, pitch, yaw })
 }
 
 fn draw_attitude(att: Attitude) {
@@ -90,7 +95,7 @@ async fn main() {
             for line in stdin.lock().lines().map_while(Result::ok) {
                 // Passthrough to stderr so raw serial is still visible.
                 eprintln!("{}", line);
-                if let Some(att) = parse_line(&line) {
+                if let Ok(att) = Attitude::from_str(&line) {
                     *state.lock().expect("failed to acquire stdin lock") = att;
                 }
             }
@@ -164,6 +169,14 @@ mod tests {
         let (val, rest) = extract_val(rest, "pitch: ").unwrap();
         assert_eq!(val, -2.9f32);
         let (val, _) = extract_val(rest, "yaw: ").unwrap();
-        // assert_eq!(val, -41.3f32);
+        assert_eq!(val, -41.3f32);
+    }
+    #[test]
+    fn test_line() {
+        let str = "qx: 1 roll: -1.9°  pitch: -2.9°  yaw: -41.3°";
+        let a = Attitude::from_str(str).unwrap();
+        assert_eq!(a.roll, -1.9f32);
+        assert_eq!(a.pitch, -2.9f32);
+        assert_eq!(a.yaw, -41.3f32);
     }
 }

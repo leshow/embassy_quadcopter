@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use embedded_hal_async::i2c::I2c;
 use icm20948::{I2cInterface, Icm20948Driver, MagConfig};
 use mpu9250_async::{Mpu6050, Mpu6050Error};
@@ -75,6 +77,27 @@ impl<I: I2c> ImuRead for Sensor<Icm20948Driver<I2cInterface<I>>> {
             Vector3::new(acc.x, acc.y, acc.z),
             Vector3::new(gyro.x, gyro.y, gyro.z),
         ))
+    }
+}
+
+#[cfg(feature = "calibrate")]
+impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
+    pub async fn run_calibration(&mut self) -> ! {
+        loop {
+            let a = self.driver.read_accelerometer_raw().await;
+            let g = self.driver.read_gyroscope_raw().await;
+            let m = self.driver.read_magnetometer_raw().await;
+            match (a, g, m) {
+                (Ok(a), Ok(g), Ok((mx, my, mz))) => esp_println::println!(
+                    "Raw:{},{},{},{},{},{},{},{},{}",
+                    a.x, a.y, a.z, g.x, g.y, g.z, mx, my, mz
+                ),
+                (Err(e), _, _) => esp_println::println!("accel error: {:?}", e),
+                (_, Err(e), _) => esp_println::println!("gyro error: {:?}", e),
+                (_, _, Err(e)) => esp_println::println!("mag error: {:?}", e),
+            }
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(20)).await;
+        }
     }
 }
 

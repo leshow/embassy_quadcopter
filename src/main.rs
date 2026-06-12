@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_arguments)]
+#![cfg_attr(feature = "calibrate", allow(unused))]
 #![no_std]
 #![no_main]
 
@@ -53,21 +54,25 @@ async fn main(_spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
+    #[cfg(not(feature = "calibrate"))]
     let mut led_fwd_pitch = gpio::Output::new(
         peripherals.GPIO10,
         gpio::Level::Low,
         esp_hal::gpio::OutputConfig::default(),
     );
+    #[cfg(not(feature = "calibrate"))]
     let mut led_bwd_pitch = gpio::Output::new(
         peripherals.GPIO9,
         gpio::Level::Low,
         esp_hal::gpio::OutputConfig::default(),
     );
+    #[cfg(not(feature = "calibrate"))]
     let mut led_fwd_roll = gpio::Output::new(
         peripherals.GPIO0,
         gpio::Level::Low,
         esp_hal::gpio::OutputConfig::default(),
     );
+    #[cfg(not(feature = "calibrate"))]
     let mut led_bwd_roll = gpio::Output::new(
         peripherals.GPIO1,
         gpio::Level::Low,
@@ -85,79 +90,63 @@ async fn main(_spawner: Spawner) {
         .await
         .expect("ICM20948 init failed");
 
-    let mut fusion = FusionBuilder::new()
-        .icm20948()
-        // .vqf()
-        .mahony()
-        // .madgwick()
-        .build();
-    // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
-    let mut last = Instant::now();
-    let mut log_counter: u32 = 0;
+    #[cfg(feature = "calibrate")]
+    sensor.run_calibration().await;
 
-    loop {
-        let now = Instant::now();
-        let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
-        last = now;
+    #[cfg(not(feature = "calibrate"))]
+    {
+        let mut fusion = FusionBuilder::new()
+            .icm20948()
+            // .vqf()
+            .mahony()
+            // .madgwick()
+            .build();
+        // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
+        let mut last = Instant::now();
+        let mut log_counter: u32 = 0;
 
-        // --- ICM20948 loop body ---
-        match sensor.read_mag().await {
-            Ok((a, g, m)) => {
-                let quat = fusion.update_imu(dt, a, g);
-                let (roll_rad, pitch_rad, yaw_rad) = quat.euler_angles();
-                let roll_deg = roll_rad * fusion::RAD_TO_DEG;
-                let pitch_deg = pitch_rad * fusion::RAD_TO_DEG;
-                let yaw_deg = yaw_rad * fusion::RAD_TO_DEG;
+        loop {
+            let now = Instant::now();
+            let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
+            last = now;
 
-                set_lights(
-                    roll_deg,
-                    pitch_deg,
-                    &mut led_fwd_roll,
-                    &mut led_bwd_roll,
-                    &mut led_fwd_pitch,
-                    &mut led_bwd_pitch,
-                );
+            match sensor.read_mag().await {
+                Ok((a, g, _m)) => {
+                    let quat = fusion.update_imu(dt, a, g);
+                    let (roll_rad, pitch_rad, yaw_rad) = quat.euler_angles();
+                    let roll_deg = roll_rad * fusion::RAD_TO_DEG;
+                    let pitch_deg = pitch_rad * fusion::RAD_TO_DEG;
+                    let yaw_deg = yaw_rad * fusion::RAD_TO_DEG;
 
-                log_counter += 1;
-                if log_counter >= LOG_EVERY_N {
-                    log_counter = 0;
-                    esp_println::println!(
-                        "roll: {:.1}\u{b0}  pitch: {:.1}\u{b0}  yaw: {:.1}\u{b0}",
+                    set_lights(
                         roll_deg,
                         pitch_deg,
-                        yaw_deg
+                        &mut led_fwd_roll,
+                        &mut led_bwd_roll,
+                        &mut led_fwd_pitch,
+                        &mut led_bwd_pitch,
                     );
+
+                    log_counter += 1;
+                    if log_counter >= LOG_EVERY_N {
+                        log_counter = 0;
+                        esp_println::println!(
+                            "qx: {:.1} qy: {:.1} qz: {:.1} qw: {:.1} roll: {:.1}\u{b0}  pitch: {:.1}\u{b0}  yaw: {:.1}\u{b0}",
+                            roll_rad,
+                            pitch_rad,
+                            yaw_rad,
+                            quat.w,
+                            roll_deg,
+                            pitch_deg,
+                            yaw_deg
+                        );
+                    }
                 }
+                Err(e) => esp_println::println!("imu error: {:?}", e),
             }
-            Err(e) => esp_println::println!("imu error: {:?}", e),
+
+            Timer::after(Duration::from_millis(LOOP_PERIOD_MS)).await;
         }
-
-        // --- MPU6050 loop body ---
-        // match mpu6050_read(&mut mpu).await {
-        //     Ok((a_angles, g)) => {
-        //         let (roll_deg, pitch_deg) = fusion.update(dt, a_angles, g);
-        //         set_lights(
-        //             roll_deg,
-        //             pitch_deg,
-        //             &mut led_fwd_roll,
-        //             &mut led_bwd_roll,
-        //             &mut led_fwd_pitch,
-        //             &mut led_bwd_pitch,
-        //         );
-
-        //         log_counter += 1;
-        //         if log_counter >= 100 {
-        //             log_counter = 0;
-        //             esp_println::println!(
-        //                 "roll: {:.1}\u{b0}  pitch: {:.1}\u{b0}",
-        //                 roll_deg,
-        //                 pitch_deg,
-        //             );
-        //         }
-        //     }
-        // }
-
-        Timer::after(Duration::from_millis(LOOP_PERIOD_MS)).await;
     }
 }
 
