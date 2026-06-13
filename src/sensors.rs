@@ -1,7 +1,10 @@
 #![allow(unused)]
 
 use embedded_hal_async::i2c::I2c;
-use icm20948::{I2cInterface, Icm20948Driver, MagConfig};
+use icm20948::{
+    AccelConfig, AccelDlpf, AccelFullScale, GyroConfig, GyroDlpf, GyroFullScale, I2cInterface,
+    Icm20948Driver, MagConfig,
+};
 use mpu9250_async::{Mpu6050, Mpu6050Error};
 use nalgebra::{Vector2, Vector3};
 
@@ -45,11 +48,42 @@ impl<I: I2c> ImuRead for Sensor<Mpu6050<I>> {
 // ICM20948 (9DOF, with mag) ---
 
 impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
-    pub async fn init_icm20948(i2c: I) -> Result<Self, icm20948::Error<I::Error>> {
+    pub async fn init_icm20948(
+        i2c: I,
+        loop_period_ms: u64,
+    ) -> Result<Self, icm20948::Error<I::Error>> {
         let interface = I2cInterface::alternative(i2c);
         let mut driver = Icm20948Driver::new(interface);
         driver.verify_who_am_i().await?;
         driver.init(&mut embassy_time::Delay).await?;
+
+        // Dividers keep sensor ODR just above the loop rate so there is always
+        // a fresh sample ready. Formula: ODR = base / (1 + div) >= 1000 / loop_period_ms
+        // => div = base * loop_period_ms / 1000 - 1
+        // saturating sub so min is 0
+        let accel_div = (1125 * loop_period_ms / 1000).saturating_sub(1) as u16;
+        let gyro_div = (1100 * loop_period_ms / 1000).saturating_sub(1) as u8;
+
+        // ±4g range (headroom over default ±2g for vibration/light maneuvers);
+        // 111Hz DLPF cuts motor vibration noise without affecting slow flight dynamics.
+        driver
+            .configure_accelerometer(AccelConfig {
+                full_scale: AccelFullScale::G4,
+                dlpf: AccelDlpf::Hz111,
+                dlpf_enable: true,
+                sample_rate_div: accel_div,
+            })
+            .await?;
+
+        // ±500°/s range (headroom over default ±250°/s); 197Hz DLPF unchanged.
+        driver
+            .configure_gyroscope(GyroConfig {
+                full_scale: GyroFullScale::Dps500,
+                dlpf: GyroDlpf::Hz197,
+                dlpf_enable: true,
+                sample_rate_div: gyro_div,
+            })
+            .await?;
 
         match driver
             .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)

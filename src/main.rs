@@ -55,28 +55,27 @@ async fn main(_spawner: Spawner) {
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     #[cfg(not(feature = "calibrate"))]
-    let mut led_fwd_pitch = gpio::Output::new(
-        peripherals.GPIO10,
-        gpio::Level::Low,
-        esp_hal::gpio::OutputConfig::default(),
-    );
-    #[cfg(not(feature = "calibrate"))]
-    let mut led_bwd_pitch = gpio::Output::new(
-        peripherals.GPIO9,
-        gpio::Level::Low,
-        esp_hal::gpio::OutputConfig::default(),
-    );
-    #[cfg(not(feature = "calibrate"))]
-    let mut led_fwd_roll = gpio::Output::new(
-        peripherals.GPIO0,
-        gpio::Level::Low,
-        esp_hal::gpio::OutputConfig::default(),
-    );
-    #[cfg(not(feature = "calibrate"))]
-    let mut led_bwd_roll = gpio::Output::new(
-        peripherals.GPIO1,
-        gpio::Level::Low,
-        esp_hal::gpio::OutputConfig::default(),
+    let (mut led_fwd_pitch, mut led_bwd_pitch, mut led_fwd_roll, mut led_bwd_roll) = (
+        gpio::Output::new(
+            peripherals.GPIO10,
+            gpio::Level::Low,
+            esp_hal::gpio::OutputConfig::default(),
+        ),
+        gpio::Output::new(
+            peripherals.GPIO9,
+            gpio::Level::Low,
+            esp_hal::gpio::OutputConfig::default(),
+        ),
+        gpio::Output::new(
+            peripherals.GPIO0,
+            gpio::Level::Low,
+            esp_hal::gpio::OutputConfig::default(),
+        ),
+        gpio::Output::new(
+            peripherals.GPIO1,
+            gpio::Level::Low,
+            esp_hal::gpio::OutputConfig::default(),
+        ),
     );
 
     let i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
@@ -89,7 +88,7 @@ async fn main(_spawner: Spawner) {
     Timer::after(Duration::from_millis(100)).await;
 
     // ICM20948
-    let mut sensor = Sensor::init_icm20948(i2c)
+    let mut sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
         .await
         .expect("ICM20948 init failed");
 
