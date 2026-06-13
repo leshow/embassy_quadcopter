@@ -12,6 +12,7 @@ use esp_hal::{
     interrupt::software::SoftwareInterruptControl,
     timer::timg::TimerGroup,
 };
+use esp_println as _;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -48,7 +49,6 @@ const LOG_EVERY_N: u32 = {
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
-    esp_println::logger::init_logger_from_env();
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -85,6 +85,9 @@ async fn main(_spawner: Spawner) {
         .with_scl(peripherals.GPIO21)
         .into_async();
 
+    // Wait for ICM20948 to power up before init
+    Timer::after(Duration::from_millis(100)).await;
+
     // ICM20948
     let mut sensor = Sensor::init_icm20948(i2c)
         .await
@@ -98,8 +101,8 @@ async fn main(_spawner: Spawner) {
         let mut fusion = FusionBuilder::new()
             .icm20948()
             // .vqf()
-            .mahony()
-            // .madgwick()
+            // .mahony()
+            .madgwick()
             .build();
         // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
         let mut last = Instant::now();
@@ -130,8 +133,8 @@ async fn main(_spawner: Spawner) {
                     log_counter += 1;
                     if log_counter >= LOG_EVERY_N {
                         log_counter = 0;
-                        esp_println::println!(
-                            "qx: {:.1} qy: {:.1} qz: {:.1} qw: {:.1} roll: {:.1}\u{b0}  pitch: {:.1}\u{b0}  yaw: {:.1}\u{b0}",
+                        defmt::info!(
+                            "qx: {} qy: {} qz: {} qw: {} \n roll: {}°  pitch: {}°  yaw: {}°",
                             roll_rad,
                             pitch_rad,
                             yaw_rad,
@@ -142,7 +145,7 @@ async fn main(_spawner: Spawner) {
                         );
                     }
                 }
-                Err(e) => esp_println::println!("imu error: {:?}", e),
+                Err(e) => defmt::error!("imu error: {}", defmt::Debug2Format(&e)),
             }
 
             Timer::after(Duration::from_millis(LOOP_PERIOD_MS)).await;

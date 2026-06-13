@@ -1,7 +1,7 @@
 [target.'cfg(target_arch = "riscv32")']
-runner = "espflash flash --monitor"
+runner = "espflash flash --monitor --log-format defmt"
 # To pin a specific port: runner = "espflash flash --monitor --port /dev/ttyUSB0"
-rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
+rustflags = ["-C", "link-arg=-Tdefmt.x", "-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
 
 [build]
 target = "riscv32imc-unknown-none-elf"
@@ -15,4 +15,4 @@ build-c6 = "build --no-default-features --features c6 --target riscv32imac-unkno
 flash-c6 = "run --no-default-features --features c6 --target riscv32imac-unknown-none-elf"
 
 [env]
-ESP_LOG = "info"
+DEFMT_LOG = "info"

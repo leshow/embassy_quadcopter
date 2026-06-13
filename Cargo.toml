@@ -12,16 +12,21 @@ embassy-time = "0.5"
 esp-hal = { version = "1.1", features = ["unstable"] }
 esp-rtos = { version = "0.3", features = ["embassy"] }
 esp-bootloader-esp-idf = { version = "0.5" }
-esp-backtrace = { version = "0.19", features = ["panic-handler", "println"] }
+esp-backtrace = { version = "0.19", features = ["panic-handler", "defmt"] }
 esp-println = { version = "0.17", default-features = false, features = [
 	"jtag-serial",
-	"log-04",      # switch to defmt-espflash for deferred logging
+	"defmt-espflash",
 ] }
 embedded-hal-async = "1.0"
+defmt = "1"
 # esp-radio = { version = "0.18.0" }
 # esp-alloc = { version = "0.10.0" }
 # external non-embassy/hal libs
-icm20948-rs = { version = "0.2", features = ["async"] }
+icm20948-rs = { git = "https://github.com/1-rafael-1/ICM-20948-rs", features = [
+	"async",
+	"dmp",
+	"defmt",
+] }
 mpu9250-async = { version = "0.1" }
 uf-ahrs = "0.2.1"
 libm = "0.2.16"

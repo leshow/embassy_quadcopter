@@ -27,7 +27,7 @@ impl<I: I2c> Sensor<Mpu6050<I>> {
     pub async fn init_mpu6050(i2c: I) -> Result<Self, Mpu6050Error<I::Error>> {
         let mut driver = Mpu6050::new(i2c);
         driver.init(&mut embassy_time::Delay).await?;
-        esp_println::println!("MPU6050 init OK");
+        defmt::info!("MPU6050 init OK");
         Ok(Self { driver })
     }
 }
@@ -56,11 +56,11 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             .await
         {
             Ok(_) => {
-                esp_println::println!("ICM20948 init OK (mag enabled)");
+                defmt::info!("ICM20948 init OK (mag enabled)");
                 Ok(Self { driver })
             }
             Err(e) => {
-                esp_println::println!("error during init_icm20948 {:?}", e,);
+                defmt::error!("error during init_icm20948 {}", defmt::Debug2Format(&e));
                 Err(e)
             }
         }
@@ -83,18 +83,27 @@ impl<I: I2c> ImuRead for Sensor<Icm20948Driver<I2cInterface<I>>> {
 #[cfg(feature = "calibrate")]
 impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
     pub async fn run_calibration(&mut self) -> ! {
+        //     loop {
+        //         let a = self.driver.read_accelerometer_raw().await;
+        //         let g = self.driver.read_gyroscope_raw().await;
+        //         let m = self.driver.read_magnetometer_raw().await;
+        //         match (a, g, m) {
+        //             (Ok(a), Ok(g), Ok((mx, my, mz))) => esp_println::println!(
+        //                 "Raw:{},{},{},{},{},{},{},{},{}",
+        //                 a.x, a.y, a.z, g.x, g.y, g.z, mx, my, mz
+        //             ),
+        //             (Err(e), _, _) => esp_println::println!("accel error: {:?}", e),
+        //             (_, Err(e), _) => esp_println::println!("gyro error: {:?}", e),
+        //             (_, _, Err(e)) => esp_println::println!("mag error: {:?}", e),
+        //         }
+        //         embassy_time::Timer::after(embassy_time::Duration::from_millis(20)).await;
+        //     }
+        // }
+
         loop {
-            let a = self.driver.read_accelerometer_raw().await;
-            let g = self.driver.read_gyroscope_raw().await;
-            let m = self.driver.read_magnetometer_raw().await;
-            match (a, g, m) {
-                (Ok(a), Ok(g), Ok((mx, my, mz))) => esp_println::println!(
-                    "Raw:{},{},{},{},{},{},{},{},{}",
-                    a.x, a.y, a.z, g.x, g.y, g.z, mx, my, mz
-                ),
-                (Err(e), _, _) => esp_println::println!("accel error: {:?}", e),
-                (_, Err(e), _) => esp_println::println!("gyro error: {:?}", e),
-                (_, _, Err(e)) => esp_println::println!("mag error: {:?}", e),
+            match self.driver.read_magnetometer().await {
+                Ok(m) => defmt::info!("{},{},{}", m.x, m.y, m.z),
+                Err(e) => defmt::error!("mag error: {}", defmt::Debug2Format(&e)),
             }
             embassy_time::Timer::after(embassy_time::Duration::from_millis(20)).await;
         }
