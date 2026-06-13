@@ -32,13 +32,13 @@ Currently only building on the c3 and c6. I'll try the s3 if I have time to atte
 
 ### Other Components
 
-| Part                   | Qty | Notes                                         | 
-| ---------------------- | --- | --------------------------------------------- | 
-| 8520 brushed motor     | 4   | find it on aliexpress like everything else    | 
-| mosfet 100N03A         | 4   | One per motor                                 | 
-| 1S LiPo battery (3.7v) | 1   | 3.7v 600mah battery 503040                    | 
-| Propeller              | 4   | 55 or 65mm                                    | 
-| 3D printed frame       | 1   | STL/3MF files in `stl/` — designed in OnShape | 
+| Part                   | Qty | Notes                                         |
+| ---------------------- | --- | --------------------------------------------- |
+| 8520 brushed motor     | 4   | find it on aliexpress like everything else    |
+| mosfet 100N03A         | 4   | One per motor                                 |
+| 1S LiPo battery (3.7v) | 1   | 3.7v 600mah battery 503040                    |
+| Propeller              | 4   | 55 or 65mm                                    |
+| 3D printed frame       | 1   | STL/3MF files in `stl/` — designed in OnShape |
 
 Requires [espflash](https://github.com/esp-rs/espflash) for flashing (`cargo install espflash`).
 
@@ -76,10 +76,10 @@ cargo run   --no-default-features --features c6 --target riscv32imac-unknown-non
 
 ### Log level
 
-`ESP_LOG` is read at compile time by `esp-println`:
+`DEFMT_LOG` is read at compile time by `esp-println`:
 
 ```sh
-ESP_LOG=debug cargo flash-c3
+DEFMT_LOG=debug cargo flash-c3
 ```
 
 ## Visualizer
@@ -87,10 +87,16 @@ ESP_LOG=debug cargo flash-c3
 to see a 3d rendering of the orientation run:
 
 ```bash
-LOG_RATE_MS=1 cargo flash-c3 2>&1 | (cd visualizer && cargo run)
+LOG_RATE_MS=1 cargo flash-c3 | (cd visualizer && cargo run)
 ```
 
 It feeds the esp32 log output to a binary reading stdin and rendering a cube on screen
+
+By default we use a software fusion of the sensor data using madgwick running on the c3. However, the ICM20948 also has a DMP which does the fusion onboard, you can run that with:
+
+```sh
+DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features dmp | (cd visualizer && cargo run)
+```
 
 ## LLM usage
 

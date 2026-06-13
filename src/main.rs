@@ -55,7 +55,7 @@ async fn main(_spawner: Spawner) {
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     #[cfg(not(feature = "calibrate"))]
-    let (mut led_fwd_pitch, mut led_bwd_pitch, mut led_fwd_roll, mut led_bwd_roll) = (
+    let (led_fwd_pitch, led_bwd_pitch, led_fwd_roll, led_bwd_roll) = (
         gpio::Output::new(
             peripherals.GPIO10,
             gpio::Level::Low,
@@ -87,68 +87,129 @@ async fn main(_spawner: Spawner) {
     // Wait for ICM20948 to power up before init
     Timer::after(Duration::from_millis(100)).await;
 
+    #[cfg(not(any(feature = "calibrate", feature = "dmp")))]
+    run(
+        i2c,
+        led_fwd_pitch,
+        led_bwd_pitch,
+        led_fwd_roll,
+        led_bwd_roll,
+    )
+    .await;
+
+    #[cfg(feature = "calibrate")]
+    {
+        // ICM20948
+        let mut sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
+            .await
+            .expect("ICM20948 init failed");
+        sensor.run_calibration().await;
+    }
+
+    #[cfg(feature = "dmp")]
+    run_dmp(i2c).await;
+}
+
+async fn run(
+    i2c: I2c<'_, esp_hal::Async>,
+    mut led_fwd_roll: gpio::Output<'_>,
+    mut led_bwd_roll: gpio::Output<'_>,
+    mut led_fwd_pitch: gpio::Output<'_>,
+    mut led_bwd_pitch: gpio::Output<'_>,
+) {
     // ICM20948
     let mut sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
         .await
         .expect("ICM20948 init failed");
 
-    #[cfg(feature = "calibrate")]
-    sensor.run_calibration().await;
+    let mut fusion = FusionBuilder::new()
+        .icm20948()
+        // .vqf()
+        // .mahony()
+        .madgwick()
+        .build();
+    // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
+    let mut last = Instant::now();
+    let mut log_counter: u32 = 0;
 
-    #[cfg(not(feature = "calibrate"))]
-    {
-        let mut fusion = FusionBuilder::new()
-            .icm20948()
-            // .vqf()
-            // .mahony()
-            .madgwick()
-            .build();
-        // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
-        let mut last = Instant::now();
-        let mut log_counter: u32 = 0;
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
+        last = now;
 
-        loop {
-            let now = Instant::now();
-            let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
-            last = now;
+        match sensor.read_mag().await {
+            Ok((a, g, _m)) => {
+                let quat = fusion.update_imu(dt, a, g);
+                let (roll_rad, pitch_rad, yaw_rad) = quat.euler_angles();
+                let roll_deg = roll_rad * fusion::RAD_TO_DEG;
+                let pitch_deg = pitch_rad * fusion::RAD_TO_DEG;
+                let yaw_deg = yaw_rad * fusion::RAD_TO_DEG;
 
-            match sensor.read_mag().await {
-                Ok((a, g, _m)) => {
-                    let quat = fusion.update_imu(dt, a, g);
-                    let (roll_rad, pitch_rad, yaw_rad) = quat.euler_angles();
-                    let roll_deg = roll_rad * fusion::RAD_TO_DEG;
-                    let pitch_deg = pitch_rad * fusion::RAD_TO_DEG;
-                    let yaw_deg = yaw_rad * fusion::RAD_TO_DEG;
+                set_lights(
+                    roll_deg,
+                    pitch_deg,
+                    &mut led_fwd_roll,
+                    &mut led_bwd_roll,
+                    &mut led_fwd_pitch,
+                    &mut led_bwd_pitch,
+                );
 
-                    set_lights(
+                log_counter += 1;
+                if log_counter >= LOG_EVERY_N {
+                    log_counter = 0;
+                    defmt::info!(
+                        "qx: {} qy: {} qz: {} qw: {} \n roll: {}°  pitch: {}°  yaw: {}°",
+                        roll_rad,
+                        pitch_rad,
+                        yaw_rad,
+                        quat.w,
                         roll_deg,
                         pitch_deg,
-                        &mut led_fwd_roll,
-                        &mut led_bwd_roll,
-                        &mut led_fwd_pitch,
-                        &mut led_bwd_pitch,
+                        yaw_deg
                     );
+                }
+            }
+            Err(e) => defmt::error!("imu error: {}", defmt::Debug2Format(&e)),
+        }
 
+        Timer::after(Duration::from_millis(LOOP_PERIOD_MS)).await;
+    }
+}
+
+#[cfg(feature = "dmp")]
+async fn run_dmp(i2c: I2c<'_, esp_hal::Async>) {
+    let mut sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
+        .await
+        .expect("ICM20948 init failed");
+
+    let mut log_counter: u32 = 0;
+
+    loop {
+        match sensor.read_dmp().await {
+            Ok(Some(data)) => {
+                if let Some(quat) = data.quaternion_9axis {
+                    let euler = quat.to_euler_angles();
                     log_counter += 1;
                     if log_counter >= LOG_EVERY_N {
                         log_counter = 0;
                         defmt::info!(
-                            "qx: {} qy: {} qz: {} qw: {} \n roll: {}°  pitch: {}°  yaw: {}°",
-                            roll_rad,
-                            pitch_rad,
-                            yaw_rad,
+                            "DMP 9axis — w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
                             quat.w,
-                            roll_deg,
-                            pitch_deg,
-                            yaw_deg
+                            quat.x,
+                            quat.y,
+                            quat.z,
+                            euler.roll * fusion::RAD_TO_DEG,
+                            euler.pitch * fusion::RAD_TO_DEG,
+                            euler.yaw * fusion::RAD_TO_DEG,
                         );
                     }
                 }
-                Err(e) => defmt::error!("imu error: {}", defmt::Debug2Format(&e)),
             }
-
-            Timer::after(Duration::from_millis(LOOP_PERIOD_MS)).await;
+            Ok(None) => {}
+            Err(e) => defmt::error!("DMP read error: {}", defmt::Debug2Format(&e)),
         }
+
+        Timer::after(Duration::from_millis(LOOP_PERIOD_MS)).await;
     }
 }
 

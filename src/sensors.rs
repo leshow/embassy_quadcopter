@@ -85,19 +85,34 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             })
             .await?;
 
-        match driver
+        driver
             .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)
             .await
+            .inspect_err(|e| {
+                defmt::error!("error during init_icm20948 {}", defmt::Debug2Format(e));
+            })?;
+
+        #[cfg(feature = "dmp")]
         {
-            Ok(_) => {
-                defmt::info!("ICM20948 init OK (mag enabled)");
-                Ok(Self { driver })
-            }
-            Err(e) => {
-                defmt::error!("error during init_icm20948 {}", defmt::Debug2Format(&e));
-                Err(e)
-            }
+            driver.dmp_init(&mut embassy_time::Delay).await?;
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
+            let dmp_config = icm20948::dmp::DmpConfig::nine_axis().with_sample_rate(100);
+            driver.dmp_configure(&dmp_config).await?;
+            driver.dmp_enable(true).await?;
+            defmt::info!("ICM20948 DMP enabled (9-axis, 100Hz)");
         }
+
+        #[cfg(not(feature = "dmp"))]
+        defmt::info!("ICM20948 init OK (mag enabled)");
+
+        Ok(Self { driver })
+    }
+
+    #[cfg(feature = "dmp")]
+    pub async fn read_dmp(
+        &mut self,
+    ) -> Result<Option<icm20948::dmp::DmpData>, icm20948::Error<I::Error>> {
+        self.driver.dmp_read_fifo().await
     }
 }
 
