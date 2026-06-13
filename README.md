@@ -92,7 +92,7 @@ LOG_RATE_MS=1 cargo flash-c3 | (cd visualizer && cargo run)
 
 It feeds the esp32 log output to a binary reading stdin and rendering a cube on screen
 
-By default we use a software fusion of the sensor data using madgwick running on the c3. However, the ICM20948 also has a DMP which does the fusion onboard, you can run that with:
+By default, sensor readings from the ICM-20948 are sent to the ESP32-C3 where a Madgwick filter fuses accel and gyro data in software to estimate orientation. The ICM-20948 also has an onboard DMP that can run the fusion directly on the sensor chip, that can be run with:
 
 ```sh
 DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features dmp | (cd visualizer && cargo run)
