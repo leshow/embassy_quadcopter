@@ -36,7 +36,8 @@ nalgebra = { version = "0.35", default-features = false, features = [
 
 [features]
 default = ["c3"]
-calibrate = []
+calibrate = [
+] # you will also have to manually edit the .cargo/config.toml to remove --monitor
 dmp = []
 c3 = [
 	"esp-hal/esp32c3",

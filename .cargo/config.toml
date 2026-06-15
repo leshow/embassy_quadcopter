@@ -1,7 +1,14 @@
 [target.'cfg(target_arch = "riscv32")']
 runner = "espflash flash --monitor --log-format defmt"
 # To pin a specific port: runner = "espflash flash --monitor --port /dev/ttyUSB0"
-rustflags = ["-C", "link-arg=-Tdefmt.x", "-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
+rustflags = [
+	"-C",
+	"link-arg=-Tdefmt.x",
+	"-C",
+	"link-arg=-Tlinkall.x",
+	"-C",
+	"force-frame-pointers",
+]
 
 [build]
 target = "riscv32imc-unknown-none-elf"
@@ -10,7 +17,7 @@ target = "riscv32imc-unknown-none-elf"
 # C3 (default — plain cargo build/run also works)
 build-c3 = "build"
 flash-c3 = "run"
-# C6
+# C6 - a in imac is for added atomics
 build-c6 = "build --no-default-features --features c6 --target riscv32imac-unknown-none-elf"
 flash-c6 = "run --no-default-features --features c6 --target riscv32imac-unknown-none-elf"
 

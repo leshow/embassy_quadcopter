@@ -7,9 +7,16 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::{
-    gpio,
+    Async, gpio,
     i2c::master::{Config as I2cConfig, I2c},
     interrupt::software::SoftwareInterruptControl,
+    ledc::{
+        LSGlobalClkSource, Ledc, LowSpeed,
+        channel::{self, ChannelIFace},
+        timer::{self, TimerIFace},
+    },
+    peripherals::LEDC,
+    time::Rate,
     timer::timg::TimerGroup,
 };
 use esp_println as _;
@@ -54,29 +61,29 @@ async fn main(_spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    #[cfg(not(feature = "calibrate"))]
-    let (led_fwd_pitch, led_bwd_pitch, led_fwd_roll, led_bwd_roll) = (
-        gpio::Output::new(
-            peripherals.GPIO10,
-            gpio::Level::Low,
-            esp_hal::gpio::OutputConfig::default(),
-        ),
-        gpio::Output::new(
-            peripherals.GPIO9,
-            gpio::Level::Low,
-            esp_hal::gpio::OutputConfig::default(),
-        ),
-        gpio::Output::new(
-            peripherals.GPIO0,
-            gpio::Level::Low,
-            esp_hal::gpio::OutputConfig::default(),
-        ),
-        gpio::Output::new(
-            peripherals.GPIO1,
-            gpio::Level::Low,
-            esp_hal::gpio::OutputConfig::default(),
-        ),
-    );
+    // #[cfg(not(feature = "calibrate"))]
+    // let (led_fwd_pitch, led_bwd_pitch, led_fwd_roll, led_bwd_roll) = (
+    //     gpio::Output::new(
+    //         peripherals.GPIO10,
+    //         gpio::Level::Low,
+    //         esp_hal::gpio::OutputConfig::default(),
+    //     ),
+    //     gpio::Output::new(
+    //         peripherals.GPIO9,
+    //         gpio::Level::Low,
+    //         esp_hal::gpio::OutputConfig::default(),
+    //     ),
+    //     gpio::Output::new(
+    //         peripherals.GPIO0,
+    //         gpio::Level::Low,
+    //         esp_hal::gpio::OutputConfig::default(),
+    //     ),
+    //     gpio::Output::new(
+    //         peripherals.GPIO1,
+    //         gpio::Level::Low,
+    //         esp_hal::gpio::OutputConfig::default(),
+    //     ),
+    // );
 
     let i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
         .unwrap()
@@ -90,10 +97,12 @@ async fn main(_spawner: Spawner) {
     #[cfg(not(any(feature = "calibrate", feature = "dmp")))]
     run(
         i2c,
-        led_fwd_pitch,
-        led_bwd_pitch,
-        led_fwd_roll,
-        led_bwd_roll,
+        //     led_fwd_pitch,
+        //     led_bwd_pitch,
+        //     led_fwd_roll,
+        //     led_bwd_roll,
+        peripherals.LEDC,
+        peripherals.GPIO9,
     )
     .await;
 
@@ -112,16 +121,50 @@ async fn main(_spawner: Spawner) {
 
 async fn run(
     i2c: I2c<'_, esp_hal::Async>,
-    mut led_fwd_roll: gpio::Output<'_>,
-    mut led_bwd_roll: gpio::Output<'_>,
-    mut led_fwd_pitch: gpio::Output<'_>,
-    mut led_bwd_pitch: gpio::Output<'_>,
+    // mut led_fwd_roll: gpio::Output<'_>,
+    // mut led_bwd_roll: gpio::Output<'_>,
+    // mut led_fwd_pitch: gpio::Output<'_>,
+    // mut led_bwd_pitch: gpio::Output<'_>,
+    ledc: LEDC<'static>,
+    rear_left_pin: impl gpio::interconnect::PeripheralOutput<'static>,
 ) {
+    let mut ledc = Ledc::new(ledc);
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+
+    let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    lstimer0
+        .configure(timer::config::Config {
+            duty: timer::config::Duty::Duty10Bit,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(78),
+        })
+        .unwrap();
+
+    let mut channel0 = ledc.channel(channel::Number::Channel0, rear_left_pin);
+    channel0
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 0,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .unwrap();
+
+    defmt::info!("motor test: 30% duty on GPIO9");
+
     // ICM20948
-    let mut sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
+    let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
         .await
         .expect("ICM20948 init failed");
 
+    #[cfg(not(feature = "dmp"))]
+    software_loop_mag(sensor).await;
+    #[cfg(feature = "dmp")]
+    run_dmp(sensor).await;
+}
+
+type Sensor20948<'a> = Sensor<icm20948::Icm20948Driver<icm20948::I2cInterface<I2c<'a, Async>>>>;
+
+async fn software_loop_mag(mut sensor: Sensor20948<'_>) {
     let mut fusion = FusionBuilder::new()
         .icm20948()
         // .vqf()
@@ -145,14 +188,14 @@ async fn run(
                 let pitch_deg = pitch_rad * fusion::RAD_TO_DEG;
                 let yaw_deg = yaw_rad * fusion::RAD_TO_DEG;
 
-                set_lights(
-                    roll_deg,
-                    pitch_deg,
-                    &mut led_fwd_roll,
-                    &mut led_bwd_roll,
-                    &mut led_fwd_pitch,
-                    &mut led_bwd_pitch,
-                );
+                // set_lights(
+                //     roll_deg,
+                //     pitch_deg,
+                //     &mut led_fwd_roll,
+                //     &mut led_bwd_roll,
+                //     &mut led_fwd_pitch,
+                //     &mut led_bwd_pitch,
+                // );
 
                 log_counter += 1;
                 if log_counter >= LOG_EVERY_N {
@@ -177,11 +220,7 @@ async fn run(
 }
 
 #[cfg(feature = "dmp")]
-async fn run_dmp(i2c: I2c<'_, esp_hal::Async>) {
-    let mut sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
-        .await
-        .expect("ICM20948 init failed");
-
+async fn run_dmp(mut sensor: S, i2c: I2c<'_, esp_hal::Async>) {
     let mut log_counter: u32 = 0;
 
     loop {

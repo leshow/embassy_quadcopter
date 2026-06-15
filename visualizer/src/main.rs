@@ -1,11 +1,12 @@
-use anyhow::Context;
-use macroquad::prelude::*;
 use std::{
     io::BufRead,
     str::FromStr,
     sync::{Arc, Mutex},
     thread,
 };
+
+use anyhow::Context;
+use macroquad::prelude::*;
 
 #[derive(Clone, Copy, Default)]
 struct Attitude {
@@ -27,7 +28,7 @@ impl FromStr for Attitude {
 
 /// Parse a float value immediately following `key` in `line`.
 /// Stops at the first character that is not a digit, dot, or minus sign,
-/// which correctly handles the UTF-8 degree symbol '°' (0xC2 0xB0).
+/// so we handle degree symbol '°' (0xC2 0xB0).
 fn extract_val<'a>(line: &'a str, key: &str) -> Option<(f32, &'a str)> {
     let (_, rest) = line.trim().split_once(key)?;
     let end = rest
@@ -38,9 +39,9 @@ fn extract_val<'a>(line: &'a str, key: &str) -> Option<(f32, &'a str)> {
 
 fn draw_attitude(att: Attitude) {
     // macroquad axes (camera at +Z looking toward origin):
-    //   X = right  → pitch axis (tilts forward/back)
-    //   Y = up     → yaw axis   (spins left/right)
-    //   Z = toward viewer → roll axis (tilts left/right)
+    //   X = right   -> pitch axis (tilts forward/back)
+    //   Y = up     -> yaw axis   (spins left/right)
+    //   Z = toward viewer -> roll axis (tilts left/right)
     let rot = Quat::from_rotation_y(att.yaw.to_radians())
         * Quat::from_rotation_x(att.pitch.to_radians())
         * Quat::from_rotation_z(att.roll.to_radians());
@@ -48,15 +49,15 @@ fn draw_attitude(att: Attitude) {
     // Generate 8 corners of a unit cube from all ±0.5 sign combinations.
     let corners: Vec<Vec3> = (0..8)
         .map(|i| {
-            let x = if i & 1 != 0 { 0.5 } else { -0.5 };
-            let y = if i & 2 != 0 { 0.5 } else { -0.5 };
-            let z = if i & 4 != 0 { 0.5 } else { -0.5 };
+            let x = if i & 0b1 != 0 { 0.5 } else { -0.5 };
+            let y = if i & 0b10 != 0 { 0.5 } else { -0.5 };
+            let z = if i & 0b100 != 0 { 0.5 } else { -0.5 };
             rot * Vec3::new(x, y, z)
         })
         .collect();
 
     // Draw an edge between every pair of corners that differ in exactly one bit
-    // (i.e. one coordinate), which gives all 12 edges of a cube.
+    // (i.e. one coordinate), which gives all 12 edges of a cube
     for a in 0..8_usize {
         for b in (a + 1)..8_usize {
             if (a ^ b).count_ones() == 1 {
@@ -86,7 +87,7 @@ async fn main() {
     let state: Arc<Mutex<Attitude>> = Arc::new(Mutex::new(Attitude::default()));
 
     // Spawn a background thread to read stdin line by line.
-    // Use `2>&1 | cargo run --manifest-path visualizer/Cargo.toml` to pipe
+    // Use `2>&1 | (cd visualizer && cargo run)` to pipe
     // espflash monitor output into this program.
     {
         let state = Arc::clone(&state);
@@ -171,6 +172,7 @@ mod tests {
         let (val, _) = extract_val(rest, "yaw: ").unwrap();
         assert_eq!(val, -41.3f32);
     }
+
     #[test]
     fn test_line() {
         let str = "qx: 1 roll: -1.9°  pitch: -2.9°  yaw: -41.3°";
