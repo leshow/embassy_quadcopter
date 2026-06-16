@@ -103,6 +103,9 @@ async fn main(_spawner: Spawner) {
         //     led_bwd_roll,
         peripherals.LEDC,
         peripherals.GPIO9,
+        peripherals.GPIO10,
+        peripherals.GPIO0,
+        peripherals.GPIO1,
     )
     .await;
 
@@ -121,12 +124,11 @@ async fn main(_spawner: Spawner) {
 
 async fn run(
     i2c: I2c<'_, esp_hal::Async>,
-    // mut led_fwd_roll: gpio::Output<'_>,
-    // mut led_bwd_roll: gpio::Output<'_>,
-    // mut led_fwd_pitch: gpio::Output<'_>,
-    // mut led_bwd_pitch: gpio::Output<'_>,
     ledc: LEDC<'static>,
     rear_left_pin: impl gpio::interconnect::PeripheralOutput<'static>,
+    rear_right_pin: impl gpio::interconnect::PeripheralOutput<'static>,
+    front_left_pin: impl gpio::interconnect::PeripheralOutput<'static>,
+    front_right_pin: impl gpio::interconnect::PeripheralOutput<'static>,
 ) {
     let mut ledc = Ledc::new(ledc);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
@@ -138,16 +140,16 @@ async fn run(
             clock_source: timer::LSClockSource::APBClk,
             frequency: Rate::from_khz(78),
         })
-        .unwrap();
+        .expect("timer init failed");
 
     let mut channel0 = ledc.channel(channel::Number::Channel0, rear_left_pin);
     channel0
         .configure(channel::config::Config {
             timer: &lstimer0,
-            duty_pct: 0,
+            duty_pct: 30,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
-        .unwrap();
+        .expect("rear left motor pwm init failed");
 
     defmt::info!("motor test: 30% duty on GPIO9");
 
