@@ -36,11 +36,13 @@ Currently only building on the c3 and c6. I'll try the s3 if I have time to atte
 | ---------------------- | --- | --------------------------------------------- |
 | 8520 brushed motor     | 4   | find it on aliexpress like everything else    |
 | mosfet 100N03A         | 4   | One per motor                                 |
-| 1S LiPo battery (3.7v) | 1   | 3.7v 600mah battery 503040                    |
+| 1S LiPo battery (3.7v) | 1   | 3.7v 1s battery 25C or more discharge rate\*  |
 | Propeller              | 4   | 55 or 65mm                                    |
 | 3D printed frame       | 1   | STL/3MF files in `stl/` — designed in OnShape |
 
 Requires [espflash](https://github.com/esp-rs/espflash) for flashing (`cargo install espflash`).
+
+\*I tried with a 503040 3.7v lipo recycled from a keyboard build but the BMS (battery management system) on it will automatically shut off after a few seconds. It's not really build to power these motors.
 
 ### ESP32-C3 (default)
 

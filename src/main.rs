@@ -98,10 +98,6 @@ async fn main(_spawner: Spawner) {
     #[cfg(not(any(feature = "calibrate", feature = "visualize")))]
     run(
         i2c,
-        //     led_fwd_pitch,
-        //     led_bwd_pitch,
-        //     led_fwd_roll,
-        //     led_bwd_roll,
         peripherals.LEDC,
         peripherals.GPIO9,
         peripherals.GPIO10,
