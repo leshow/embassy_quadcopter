@@ -82,14 +82,14 @@ cargo run   --no-default-features --features c6 --target riscv32imac-unknown-non
 DEFMT_LOG=debug cargo flash-c3
 ```
 
-## Visualizer 
+## Visualizer
 
 NOTE: visualizer output is currently broken as i've been testing the pwm motor control. I will add a feature flag to stream output to the visualizer.
 
 to see a 3d rendering of the orientation run:
 
 ```bash
-LOG_RATE_MS=1 cargo flash-c3 | (cd visualizer && cargo run)
+LOG_RATE_MS=1 cargo flash-c3 --features visualize | (cd visualizer && cargo run)
 ```
 
 It feeds the esp32 log output to a binary reading stdin and rendering a cube on screen
@@ -97,7 +97,7 @@ It feeds the esp32 log output to a binary reading stdin and rendering a cube on 
 By default, sensor readings from the ICM-20948 are sent to the ESP32-C3 where a Madgwick filter fuses accel and gyro data in software to estimate orientation. The ICM-20948 also has an onboard DMP that fuses data directly on the sensor board. Output looks pretty good and doesn't have the yaw drift that the software fusion does when the magnetometer is enabled, you can run DMP on the sensor coprocessor with:
 
 ```sh
-DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features dmp | (cd visualizer && cargo run)
+DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features visualize | (cd visualizer && cargo run)
 ```
 
 ## LLM usage

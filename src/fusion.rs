@@ -409,7 +409,12 @@ impl Fusion<MPU6050, Complementary> {
     /// 6DOF complementary filter.
     /// `acc_angles` is the output of `mpu.get_acc_angles()`: [roll_rad, pitch_rad].
     /// No magnetometer — yaw is fixed at 0. Returns orientation as a quaternion.
-    pub fn update(&mut self, dt: f32, acc_angles: Vector2<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+    pub fn update(
+        &mut self,
+        dt: f32,
+        acc_angles: Vector2<f32>,
+        g: Vector3<f32>,
+    ) -> UnitQuaternion<f32> {
         let this = &mut self.filter;
         (this.angle_roll, this.angle_pitch) = utils::complementary_filter(
             this.angle_roll,

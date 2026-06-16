@@ -4,7 +4,7 @@
 #![no_main]
 
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     Async, gpio,
@@ -26,8 +26,9 @@ esp_bootloader_esp_idf::esp_app_desc!();
 mod fusion;
 mod sensors;
 
-use crate::fusion::FusionBuilder;
-use crate::sensors::{ImuReadMag, Sensor};
+use crate::sensors::Sensor;
+#[cfg(not(feature = "dmp"))]
+use crate::{fusion::FusionBuilder, sensors::ImuReadMag};
 
 const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
 
@@ -94,7 +95,7 @@ async fn main(_spawner: Spawner) {
     // Wait for ICM20948 to power up before init
     Timer::after(Duration::from_millis(100)).await;
 
-    #[cfg(not(any(feature = "calibrate", feature = "dmp")))]
+    #[cfg(not(any(feature = "calibrate", feature = "visualize")))]
     run(
         i2c,
         //     led_fwd_pitch,
@@ -118,8 +119,8 @@ async fn main(_spawner: Spawner) {
         sensor.run_calibration().await;
     }
 
-    #[cfg(feature = "dmp")]
-    run_dmp(i2c).await;
+    #[cfg(feature = "visualize")]
+    run_visualizer(i2c).await;
 }
 
 async fn run(
@@ -146,12 +147,39 @@ async fn run(
     channel0
         .configure(channel::config::Config {
             timer: &lstimer0,
-            duty_pct: 30,
+            duty_pct: 20,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("rear left motor pwm init failed");
 
-    defmt::info!("motor test: 30% duty on GPIO9");
+    let mut channel1 = ledc.channel(channel::Number::Channel1, rear_right_pin);
+    channel1
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 20,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .expect("rear right motor pwm init failed");
+
+    let mut channel2 = ledc.channel(channel::Number::Channel2, front_left_pin);
+    channel2
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 20,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .expect("front left motor pwm init failed");
+
+    let mut channel3 = ledc.channel(channel::Number::Channel3, front_right_pin);
+    channel3
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 20,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .expect("front right motor pwm init failed");
+
+    defmt::info!("motors initialized: all channels 10%");
 
     // ICM20948
     let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
@@ -166,6 +194,7 @@ async fn run(
 
 type Sensor20948<'a> = Sensor<icm20948::Icm20948Driver<icm20948::I2cInterface<I2c<'a, Async>>>>;
 
+#[cfg(not(feature = "dmp"))]
 async fn software_loop_mag(mut sensor: Sensor20948<'_>) {
     let mut fusion = FusionBuilder::new()
         .icm20948()
@@ -222,7 +251,7 @@ async fn software_loop_mag(mut sensor: Sensor20948<'_>) {
 }
 
 #[cfg(feature = "dmp")]
-async fn run_dmp(mut sensor: S, i2c: I2c<'_, esp_hal::Async>) {
+async fn run_dmp(mut sensor: Sensor20948<'_>) {
     let mut log_counter: u32 = 0;
 
     loop {
@@ -254,6 +283,19 @@ async fn run_dmp(mut sensor: S, i2c: I2c<'_, esp_hal::Async>) {
     }
 }
 
+#[cfg(feature = "visualize")]
+async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>) {
+    let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
+        .await
+        .expect("ICM20948 init failed");
+
+    #[cfg(not(feature = "dmp"))]
+    software_loop_mag(sensor).await;
+    #[cfg(feature = "dmp")]
+    run_dmp(sensor).await;
+}
+
+#[allow(dead_code)]
 fn set_lights(
     roll_deg: f32,
     pitch_deg: f32,
