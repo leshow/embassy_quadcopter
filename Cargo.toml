@@ -22,11 +22,7 @@ defmt = "1"
 # esp-radio = { version = "0.18.0" }
 # esp-alloc = { version = "0.10.0" }
 # external non-embassy/hal libs
-icm20948-rs = { git = "https://github.com/1-rafael-1/ICM-20948-rs", features = [
-	"async",
-	"dmp",
-	"defmt",
-] }
+icm20948-rs = { version = "0.2.2", features = ["async", "dmp", "defmt"] }
 mpu9250-async = { version = "0.1" }
 uf-ahrs = "0.2.1"
 libm = "0.2.16"
