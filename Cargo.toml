@@ -57,7 +57,7 @@ opt-level = "s"
 [profile.dev]
 # Needed to fit in RAM even in debug builds
 opt-level = "s"
-overflow-checks = false
 
 [patch.crates-io]
 mpu9250-async = { path = "vendor/mpu9250-async" }
+icm20948-rs = { path = "../ICM-20948-rs" }

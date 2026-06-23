@@ -89,11 +89,14 @@ async fn main(_spawner: Spawner) {
     //     ),
     // );
 
-    let i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
-        .unwrap()
-        .with_sda(peripherals.GPIO20)
-        .with_scl(peripherals.GPIO21)
-        .into_async();
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO20)
+    .with_scl(peripherals.GPIO21)
+    .into_async();
 
     // Wait for ICM20948 to power up before init
     Timer::after(Duration::from_millis(100)).await;

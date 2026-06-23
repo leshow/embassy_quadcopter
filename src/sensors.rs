@@ -132,7 +132,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
                     active_low: false,
                     open_drain: false,
                     latch_enabled: true,
-                    clear_on_any_read: true,
+                    clear_on_any_read: false,
                 })
                 .await?;
             driver
