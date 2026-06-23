@@ -4,6 +4,7 @@ use embedded_hal_async::i2c::I2c;
 use icm20948::{
     AccelConfig, AccelDlpf, AccelFullScale, GyroConfig, GyroDlpf, GyroFullScale, I2cInterface,
     Icm20948Driver, MagConfig,
+    interrupt::{InterruptConfig, InterruptPinConfig},
 };
 use mpu9250_async::{Mpu6050, Mpu6050Error};
 use nalgebra::{Vector2, Vector3};
@@ -57,33 +58,53 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
         driver.verify_who_am_i().await?;
         driver.init(&mut embassy_time::Delay).await?;
 
-        // Dividers keep sensor ODR just above the loop rate so there is always
-        // a fresh sample ready. Formula: ODR = base / (1 + div) >= 1000 / loop_period_ms
-        // => div = base * loop_period_ms / 1000 - 1
-        // saturating sub so min is 0
-        let accel_div = (1125 * loop_period_ms / 1000).saturating_sub(1) as u16;
-        let gyro_div = (1100 * loop_period_ms / 1000).saturating_sub(1) as u8;
-
-        // ±4g range (headroom over default ±2g for vibration/light maneuvers);
-        // 111Hz DLPF cuts motor vibration noise without affecting slow flight dynamics.
-        driver
-            .configure_accelerometer(AccelConfig {
-                full_scale: AccelFullScale::G4,
-                dlpf: AccelDlpf::Hz111,
-                dlpf_enable: true,
-                sample_rate_div: accel_div,
-            })
-            .await?;
-
-        // ±500°/s range (headroom over default ±250°/s); 197Hz DLPF unchanged.
-        driver
-            .configure_gyroscope(GyroConfig {
-                full_scale: GyroFullScale::Dps500,
-                dlpf: GyroDlpf::Hz197,
-                dlpf_enable: true,
-                sample_rate_div: gyro_div,
-            })
-            .await?;
+        // DMP locks full scale (gyro=2000dps, accel=±4g) and ODR via dmp_configure;
+        // only DLPF settings survive into DMP mode.
+        // Non-DMP mode uses ±500dps/±4g with loop-rate-based ODR dividers.
+        #[cfg(feature = "dmp")]
+        {
+            // 111Hz DLPF cuts motor vibration noise; full_scale and sample_rate_div
+            // will be overwritten by dmp_configure so we match DMP's expected values
+            driver
+                .configure_accelerometer(AccelConfig {
+                    full_scale: AccelFullScale::G4,
+                    dlpf: AccelDlpf::Hz111,
+                    dlpf_enable: true,
+                    sample_rate_div: 0,
+                })
+                .await?;
+            driver
+                .configure_gyroscope(GyroConfig {
+                    full_scale: GyroFullScale::Dps2000,
+                    dlpf: GyroDlpf::Hz197,
+                    dlpf_enable: true,
+                    sample_rate_div: 0,
+                })
+                .await?;
+        }
+        #[cfg(not(feature = "dmp"))]
+        {
+            // ODR = base / (1 + div); dividers keep sensor rate just above the loop rate
+            let accel_div = (1125 * loop_period_ms / 1000).saturating_sub(1) as u16;
+            let gyro_div = (1100 * loop_period_ms / 1000).saturating_sub(1) as u8;
+            driver
+                .configure_accelerometer(AccelConfig {
+                    full_scale: AccelFullScale::G4,
+                    dlpf: AccelDlpf::Hz111,
+                    dlpf_enable: true,
+                    sample_rate_div: accel_div,
+                })
+                .await?;
+            // ±500°/s gives finer resolution than 2000dps for stable hover
+            driver
+                .configure_gyroscope(GyroConfig {
+                    full_scale: GyroFullScale::Dps500,
+                    dlpf: GyroDlpf::Hz197,
+                    dlpf_enable: true,
+                    sample_rate_div: gyro_div,
+                })
+                .await?;
+        }
 
         driver
             .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)
@@ -94,12 +115,42 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
 
         #[cfg(feature = "dmp")]
         {
-            driver.dmp_init(&mut embassy_time::Delay).await?;
-            embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
-            let dmp_config = icm20948::dmp::DmpConfig::nine_axis().with_sample_rate(100);
-            driver.dmp_configure(&dmp_config).await?;
+            use defmt::info;
+            use embassy_time::Delay;
+            use icm20948::dmp::DmpConfig;
+
+            let mut int_cfg = InterruptConfig::data_ready_only();
+            int_cfg.dmp = true;
+            driver.configure_interrupts(&int_cfg).await.unwrap();
+
+            info!("Loading DMP firmware and configuring...");
+            driver.dmp_init(&mut Delay).await.unwrap();
+            driver.dmp_init_magnetometer(&mut Delay).await.unwrap();
+            // active-high push-pull — no pull resistor needed on the INT wire
+            driver
+                .configure_interrupt_pin(&InterruptPinConfig {
+                    active_low: false,
+                    open_drain: false,
+                    latch_enabled: true,
+                    clear_on_any_read: true,
+                })
+                .await?;
+            driver
+                .configure_interrupts(&InterruptConfig {
+                    dmp: true,
+                    ..Default::default()
+                })
+                .await?;
+
+            let dmp_config = DmpConfig::nine_axis().with_sample_rate(225);
+
+            driver.dmp_configure(&dmp_config).await.unwrap();
+            driver.reset_fifo().await.unwrap();
             driver.dmp_enable(true).await?;
-            defmt::info!("ICM20948 DMP enabled (9-axis, 100Hz)");
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
+            // clear any interrupt that fired before we started listening
+            let _ = driver.read_interrupt_status().await;
+            defmt::info!("ICM20948 DMP enabled (9-axis, 225Hz)");
         }
 
         #[cfg(not(feature = "dmp"))]

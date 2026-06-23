@@ -28,7 +28,10 @@ mod sensors;
 
 use crate::sensors::Sensor;
 #[cfg(not(feature = "dmp"))]
-use crate::{fusion::FusionBuilder, sensors::ImuReadMag};
+use crate::{
+    fusion::FusionBuilder,
+    sensors::{ImuRead, ImuReadMag},
+};
 
 const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
 
@@ -96,15 +99,19 @@ async fn main(_spawner: Spawner) {
     Timer::after(Duration::from_millis(100)).await;
 
     #[cfg(not(any(feature = "calibrate", feature = "visualize")))]
-    run(
-        i2c,
-        peripherals.LEDC,
-        peripherals.GPIO9,
-        peripherals.GPIO10,
-        peripherals.GPIO0,
-        peripherals.GPIO1,
-    )
-    .await;
+    {
+        let int_pin = gpio::Input::new(peripherals.GPIO6, gpio::InputConfig::default());
+        run(
+            i2c,
+            peripherals.LEDC,
+            peripherals.GPIO9,
+            peripherals.GPIO10,
+            peripherals.GPIO0,
+            peripherals.GPIO1,
+            int_pin,
+        )
+        .await;
+    }
 
     #[cfg(feature = "calibrate")]
     {
@@ -116,7 +123,10 @@ async fn main(_spawner: Spawner) {
     }
 
     #[cfg(feature = "visualize")]
-    run_visualizer(i2c).await;
+    {
+        let int_pin = gpio::Input::new(peripherals.GPIO6, gpio::InputConfig::default());
+        run_visualizer(i2c, int_pin).await;
+    }
 }
 
 async fn run(
@@ -126,6 +136,7 @@ async fn run(
     rear_right_pin: impl gpio::interconnect::PeripheralOutput<'static>,
     front_left_pin: impl gpio::interconnect::PeripheralOutput<'static>,
     front_right_pin: impl gpio::interconnect::PeripheralOutput<'static>,
+    int_pin: gpio::Input<'static>,
 ) {
     let mut ledc = Ledc::new(ledc);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
@@ -183,15 +194,18 @@ async fn run(
         .expect("ICM20948 init failed");
 
     #[cfg(not(feature = "dmp"))]
-    software_loop_mag(sensor).await;
+    {
+        let _ = int_pin;
+        software_loop(sensor).await;
+    }
     #[cfg(feature = "dmp")]
-    run_dmp(sensor).await;
+    run_dmp(sensor, int_pin).await;
 }
 
 type Sensor20948<'a> = Sensor<icm20948::Icm20948Driver<icm20948::I2cInterface<I2c<'a, Async>>>>;
 
 #[cfg(not(feature = "dmp"))]
-async fn software_loop_mag(mut sensor: Sensor20948<'_>) {
+async fn software_loop(mut sensor: Sensor20948<'_>) {
     let mut fusion = FusionBuilder::new()
         .icm20948()
         // .vqf()
@@ -199,16 +213,16 @@ async fn software_loop_mag(mut sensor: Sensor20948<'_>) {
         .madgwick()
         .build();
     // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
-    let mut last = Instant::now();
+    let mut last = embassy_time::Instant::now();
     let mut log_counter: u32 = 0;
 
     loop {
-        let now = Instant::now();
+        let now = embassy_time::Instant::now();
         let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
         last = now;
 
-        match sensor.read_mag().await {
-            Ok((a, g, _m)) => {
+        match sensor.read().await {
+            Ok((a, g)) => {
                 let quat = fusion.update_imu(dt, a, g);
                 let (roll_rad, pitch_rad, yaw_rad) = quat.euler_angles();
                 let roll_deg = roll_rad * fusion::RAD_TO_DEG;
@@ -247,48 +261,53 @@ async fn software_loop_mag(mut sensor: Sensor20948<'_>) {
 }
 
 #[cfg(feature = "dmp")]
-async fn run_dmp(mut sensor: Sensor20948<'_>) {
+async fn run_dmp(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>) {
     let mut log_counter: u32 = 0;
 
     loop {
+        use icm20948::dmp::DmpData;
+
+        int_pin.wait_for_high().await;
         match sensor.read_dmp().await {
-            Ok(Some(data)) => {
-                if let Some(quat) = data.quaternion_9axis {
-                    let euler = quat.to_euler_angles();
-                    log_counter += 1;
-                    if log_counter >= LOG_EVERY_N {
-                        log_counter = 0;
-                        defmt::info!(
-                            "DMP 9axis — w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
-                            quat.w,
-                            quat.x,
-                            quat.y,
-                            quat.z,
-                            euler.roll * fusion::RAD_TO_DEG,
-                            euler.pitch * fusion::RAD_TO_DEG,
-                            euler.yaw * fusion::RAD_TO_DEG,
-                        );
-                    }
+            Ok(Some(DmpData {
+                quaternion_9axis: Some(quat),
+                ..
+            })) => {
+                let euler = quat.to_euler_angles();
+                log_counter += 1;
+                if log_counter >= LOG_EVERY_N {
+                    log_counter = 0;
+                    defmt::info!(
+                        "DMP 9axis - w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
+                        quat.w,
+                        quat.x,
+                        quat.y,
+                        quat.z,
+                        euler.roll * fusion::RAD_TO_DEG,
+                        euler.pitch * fusion::RAD_TO_DEG,
+                        euler.yaw * fusion::RAD_TO_DEG,
+                    );
                 }
             }
-            Ok(None) => {}
+            Ok(_) => {}
             Err(e) => defmt::error!("DMP read error: {}", defmt::Debug2Format(&e)),
         }
-
-        Timer::after(Duration::from_millis(LOOP_PERIOD_MS)).await;
     }
 }
 
 #[cfg(feature = "visualize")]
-async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>) {
+async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>, int_pin: gpio::Input<'static>) {
     let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
         .await
         .expect("ICM20948 init failed");
 
     #[cfg(not(feature = "dmp"))]
-    software_loop_mag(sensor).await;
+    {
+        let _ = int_pin;
+        software_loop(sensor).await;
+    }
     #[cfg(feature = "dmp")]
-    run_dmp(sensor).await;
+    run_dmp(sensor, int_pin).await;
 }
 
 #[allow(dead_code)]

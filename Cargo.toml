@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["visualizer"]
+exclude = ["visualizer", "gamepad"]
 
 [package]
 name = "drone_embassy"
@@ -57,6 +57,7 @@ opt-level = "s"
 [profile.dev]
 # Needed to fit in RAM even in debug builds
 opt-level = "s"
+overflow-checks = false
 
 [patch.crates-io]
 mpu9250-async = { path = "vendor/mpu9250-async" }

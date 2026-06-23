@@ -3,3 +3,4 @@
 .gitignore
 mag_*.csv
 mag_*.txt
+.claude/
