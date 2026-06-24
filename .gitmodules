@@ -1,0 +1,4 @@
+[submodule "vendor/ICM-20948-rs"]
+	path = vendor/ICM-20948-rs
+	url = https://github.com/leshow/ICM-20948-rs.git
+	branch = fix_fifo_and_overflow

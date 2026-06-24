@@ -60,4 +60,4 @@ opt-level = "s"
 
 [patch.crates-io]
 mpu9250-async = { path = "vendor/mpu9250-async" }
-icm20948-rs = { path = "../ICM-20948-rs" }
+icm20948-rs = { path = "vendor/ICM-20948-rs" }

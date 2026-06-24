@@ -44,6 +44,16 @@ Requires [espflash](https://github.com/esp-rs/espflash) for flashing (`cargo ins
 
 \*I tried with a 503040 3.7v lipo recycled from a keyboard build but the BMS (battery management system) on it will automatically shut off after a few seconds. It's not really build to power these motors.
 
+## Getting started
+
+This repo uses a vendored fork of `icm20948-rs` as a git submodule. After cloning, initialize it:
+
+```sh
+git clone --recurse-submodules https://github.com/leshow/embassy_drone
+# or if you already cloned without submodules:
+git submodule update --init --recursive
+```
+
 ### ESP32-C3 (default)
 
 ```sh
