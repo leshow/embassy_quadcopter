@@ -96,8 +96,6 @@ DEFMT_LOG=debug cargo flash-c3
 
 ## Visualizer
 
-NOTE: visualizer output is currently broken as i've been testing the pwm motor control. I will add a feature flag to stream output to the visualizer.
-
 to see a 3d rendering of the orientation run:
 
 ```bash
