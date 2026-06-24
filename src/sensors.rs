@@ -132,7 +132,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
                     active_low: false,
                     open_drain: false,
                     latch_enabled: true,
-                    clear_on_any_read: false,
+                    clear_on_any_read: true,
                 })
                 .await?;
             driver
@@ -142,7 +142,10 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
                 })
                 .await?;
 
-            let dmp_config = DmpConfig::nine_axis().with_sample_rate(225);
+            let dmp_config = DmpConfig::six_axis()
+                .with_calibrated_gyro()
+                .with_calibrated_mag()
+                .with_sample_rate(225);
 
             driver.dmp_configure(&dmp_config).await.unwrap();
             driver.reset_fifo().await.unwrap();

@@ -292,6 +292,26 @@ async fn run_dmp(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>)
                     );
                 }
             }
+            Ok(Some(DmpData {
+                quaternion_6axis: Some(quat),
+                ..
+            })) => {
+                let euler = quat.to_euler_angles();
+                log_counter += 1;
+                if log_counter >= LOG_EVERY_N {
+                    log_counter = 0;
+                    defmt::info!(
+                        "DMP 6axis - w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
+                        quat.w,
+                        quat.x,
+                        quat.y,
+                        quat.z,
+                        euler.roll * fusion::RAD_TO_DEG,
+                        euler.pitch * fusion::RAD_TO_DEG,
+                        euler.yaw * fusion::RAD_TO_DEG,
+                    );
+                }
+            }
             Ok(_) => {}
             Err(e) => defmt::error!("DMP read error: {}", defmt::Debug2Format(&e)),
         }
