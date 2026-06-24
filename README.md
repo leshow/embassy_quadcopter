@@ -99,12 +99,12 @@ DEFMT_LOG=debug cargo flash-c3
 to see a 3d rendering of the orientation run:
 
 ```bash
-LOG_RATE_MS=1 cargo flash-c3 --features visualize | (cd visualizer && cargo run)
+DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features visualize | (cd visualizer && cargo run)
 ```
 
 It feeds the esp32 log output to a binary reading stdin and rendering a cube on screen
 
-By default, sensor readings from the ICM-20948 are sent to the ESP32-C3 where a Madgwick filter fuses accel and gyro data in software to estimate orientation. The ICM-20948 also has an onboard DMP that fuses data directly on the sensor board. Output looks pretty good and doesn't have the yaw drift that the software fusion does when the magnetometer is enabled, you can run DMP on the sensor coprocessor with:
+By default, sensor readings from the ICM-20948 are sent to the ESP32-C3 where either a Madgwick filter fuses accel and gyro data in software to correct orientation or the IMU's DMP is used to get the already fused output (`dmp` feature is on by default). The ICM-20948 also has an onboard DMP that fuses data directly on the sensor board. Output looks pretty good and doesn't have the yaw drift that the software fusion does when the magnetometer is enabled.
 
 ```sh
 DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features visualize | (cd visualizer && cargo run)
@@ -112,4 +112,4 @@ DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features visualize | (cd visuali
 
 ## LLM usage
 
-Docs and tests are sometimes generated with the use of LLMs, along with explanation/discovery, but the purpose of this project is to actually learn, so the code is still written by a human.
+Docs and tests are sometimes generated with the use of LLMs, along with explanation/discovery, but the purpose of this project is to actually learn, so the code is still written by a human (hi!)
