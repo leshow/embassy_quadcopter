@@ -16,8 +16,10 @@ esp-println = { version = "0.17", default-features = false, features = [
 ] }
 embedded-hal-async = "1.0"
 defmt = "1"
-# esp-radio = { version = "0.18.0" }
-# esp-alloc = { version = "0.10.0" }
+esp-radio = { version = "0.18.0", features = ["wifi"] }
+esp-alloc = { version = "0.10.0" }
+embassy-net = { version = "0.9", features = ["udp", "medium-ethernet", "proto-ipv4"] }
+static_cell = "2"
 # external non-embassy/hal libs
 icm20948-rs = { version = "0.2.3", features = ["async", "dmp", "defmt"] }
 mpu9250-async = { version = "0.1" }
@@ -40,6 +42,7 @@ c3 = [
 	"esp-bootloader-esp-idf/esp32c3",
 	"esp-backtrace/esp32c3",
 	"esp-println/esp32c3",
+	"esp-radio/esp32c3",
 ]
 c6 = [
 	"esp-hal/esp32c6",
@@ -47,4 +50,5 @@ c6 = [
 	"esp-bootloader-esp-idf/esp32c6",
 	"esp-backtrace/esp32c6",
 	"esp-println/esp32c6",
+	"esp-radio/esp32c6",
 ]

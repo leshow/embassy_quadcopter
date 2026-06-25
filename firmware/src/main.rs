@@ -7,7 +7,8 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
-    Async, gpio,
+    Async,
+    gpio::{self, interconnect::PeripheralOutput},
     i2c::master::{Config as I2cConfig, I2c},
     interrupt::software::SoftwareInterruptControl,
     ledc::{
@@ -16,6 +17,7 @@ use esp_hal::{
         timer::{self, TimerIFace},
     },
     peripherals::LEDC,
+    ram,
     time::Rate,
     timer::timg::TimerGroup,
 };
@@ -25,6 +27,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 mod fusion;
 mod sensors;
+mod wifi;
 
 use crate::sensors::Sensor;
 #[cfg(not(feature = "dmp"))]
@@ -60,6 +63,10 @@ const LOG_EVERY_N: u32 = {
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
+
+    // allocate heap for wifi
+    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 36 * 1024);
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -141,58 +148,13 @@ async fn run(
     front_right_pin: impl gpio::interconnect::PeripheralOutput<'static>,
     int_pin: gpio::Input<'static>,
 ) {
-    let mut ledc = Ledc::new(ledc);
-    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
-
-    let duty = 0;
-    let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
-    lstimer0
-        .configure(timer::config::Config {
-            duty: timer::config::Duty::Duty10Bit,
-            clock_source: timer::LSClockSource::APBClk,
-            frequency: Rate::from_khz(78),
-        })
-        .expect("timer init failed");
-
-    let mut chan_rl = ledc.channel(channel::Number::Channel0, rear_left_pin);
-    chan_rl
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
-            drive_mode: esp_hal::gpio::DriveMode::PushPull,
-        })
-        .expect("rear left motor pwm init failed");
-
-    let mut chan_rr = ledc.channel(channel::Number::Channel1, rear_right_pin);
-    chan_rr
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
-            drive_mode: esp_hal::gpio::DriveMode::PushPull,
-        })
-        .expect("rear right motor pwm init failed");
-
-    let mut chan_fl = ledc.channel(channel::Number::Channel2, front_left_pin);
-    chan_fl
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
-            drive_mode: esp_hal::gpio::DriveMode::PushPull,
-        })
-        .expect("front left motor pwm init failed");
-
-    let mut chan_fr = ledc.channel(channel::Number::Channel3, front_right_pin);
-    chan_fr
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
-            drive_mode: esp_hal::gpio::DriveMode::PushPull,
-        })
-        .expect("front right motor pwm init failed");
-
-    defmt::info!("motors initialized: all channels {}%", duty);
-
-    chan_fl.set_duty(10).expect("failed to set duty");
+    init_pwm_motors(
+        ledc,
+        rear_left_pin,
+        rear_right_pin,
+        front_left_pin,
+        front_right_pin,
+    );
     // ICM20948
     let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
         .await
@@ -370,4 +332,68 @@ fn set_lights(
     };
     led_fwd_roll.set_level(fwd.into());
     led_bwd_roll.set_level(bwd.into());
+}
+
+fn init_pwm_motors<
+    RL: PeripheralOutput<'static>,
+    RR: PeripheralOutput<'static>,
+    FL: PeripheralOutput<'static>,
+    FR: PeripheralOutput<'static>,
+>(
+    ledc: LEDC<'static>,
+    rear_left_pin: RL,
+    rear_right_pin: RR,
+    front_left_pin: FL,
+    front_right_pin: FR,
+) {
+    let mut ledc = Ledc::new(ledc);
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+
+    let duty = 0;
+    let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    lstimer0
+        .configure(timer::config::Config {
+            duty: timer::config::Duty::Duty10Bit,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(78),
+        })
+        .expect("timer init failed");
+
+    let mut chan_rl = ledc.channel(channel::Number::Channel0, rear_left_pin);
+    chan_rl
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 0,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .expect("rear left motor pwm init failed");
+
+    let mut chan_rr = ledc.channel(channel::Number::Channel1, rear_right_pin);
+    chan_rr
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 0,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .expect("rear right motor pwm init failed");
+
+    let mut chan_fl = ledc.channel(channel::Number::Channel2, front_left_pin);
+    chan_fl
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 0,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .expect("front left motor pwm init failed");
+
+    let mut chan_fr = ledc.channel(channel::Number::Channel3, front_right_pin);
+    chan_fr
+        .configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 0,
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .expect("front right motor pwm init failed");
+
+    defmt::info!("motors initialized: all channels {}%", duty);
 }
