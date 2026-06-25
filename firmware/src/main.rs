@@ -107,8 +107,8 @@ async fn main(_spawner: Spawner) {
         run(
             i2c,
             peripherals.LEDC,
-            peripherals.GPIO9,
             peripherals.GPIO10,
+            peripherals.GPIO9,
             peripherals.GPIO0,
             peripherals.GPIO1,
             int_pin,
@@ -144,6 +144,7 @@ async fn run(
     let mut ledc = Ledc::new(ledc);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
+    let duty = 0;
     let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
     lstimer0
         .configure(timer::config::Config {
@@ -153,44 +154,45 @@ async fn run(
         })
         .expect("timer init failed");
 
-    let mut channel0 = ledc.channel(channel::Number::Channel0, rear_left_pin);
-    channel0
+    let mut chan_rl = ledc.channel(channel::Number::Channel0, rear_left_pin);
+    chan_rl
         .configure(channel::config::Config {
             timer: &lstimer0,
-            duty_pct: 20,
+            duty_pct: 0,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("rear left motor pwm init failed");
 
-    let mut channel1 = ledc.channel(channel::Number::Channel1, rear_right_pin);
-    channel1
+    let mut chan_rr = ledc.channel(channel::Number::Channel1, rear_right_pin);
+    chan_rr
         .configure(channel::config::Config {
             timer: &lstimer0,
-            duty_pct: 20,
+            duty_pct: 0,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("rear right motor pwm init failed");
 
-    let mut channel2 = ledc.channel(channel::Number::Channel2, front_left_pin);
-    channel2
+    let mut chan_fl = ledc.channel(channel::Number::Channel2, front_left_pin);
+    chan_fl
         .configure(channel::config::Config {
             timer: &lstimer0,
-            duty_pct: 20,
+            duty_pct: 0,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("front left motor pwm init failed");
 
-    let mut channel3 = ledc.channel(channel::Number::Channel3, front_right_pin);
-    channel3
+    let mut chan_fr = ledc.channel(channel::Number::Channel3, front_right_pin);
+    chan_fr
         .configure(channel::config::Config {
             timer: &lstimer0,
-            duty_pct: 20,
+            duty_pct: 0,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("front right motor pwm init failed");
 
-    defmt::info!("motors initialized: all channels 10%");
+    defmt::info!("motors initialized: all channels {}%", duty);
 
+    chan_fl.set_duty(10).expect("failed to set duty");
     // ICM20948
     let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
         .await
@@ -244,7 +246,7 @@ async fn software_loop(mut sensor: Sensor20948<'_>) {
                 log_counter += 1;
                 if log_counter >= LOG_EVERY_N {
                     log_counter = 0;
-                    defmt::info!(
+                    defmt::debug!(
                         "qx: {} qy: {} qz: {} qw: {} \n roll: {}°  pitch: {}°  yaw: {}°",
                         roll_rad,
                         pitch_rad,
@@ -280,7 +282,7 @@ async fn run_dmp(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>)
                 log_counter += 1;
                 if log_counter >= LOG_EVERY_N {
                     log_counter = 0;
-                    defmt::info!(
+                    defmt::debug!(
                         "DMP 9axis - w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
                         quat.w,
                         quat.x,
@@ -300,7 +302,7 @@ async fn run_dmp(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>)
                 log_counter += 1;
                 if log_counter >= LOG_EVERY_N {
                     log_counter = 0;
-                    defmt::info!(
+                    defmt::debug!(
                         "DMP 6axis - w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
                         quat.w,
                         quat.x,

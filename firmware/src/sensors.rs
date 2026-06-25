@@ -142,7 +142,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
                 })
                 .await?;
 
-            let dmp_config = DmpConfig::six_axis()
+            let dmp_config = DmpConfig::nine_axis()
                 .with_calibrated_gyro()
                 .with_calibrated_mag()
                 .with_sample_rate(225);
@@ -205,7 +205,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
 
         loop {
             match self.driver.read_magnetometer().await {
-                Ok(m) => defmt::info!("{},{},{}", m.x, m.y, m.z),
+                Ok(m) => defmt::debug!("{},{},{}", m.x, m.y, m.z),
                 Err(e) => defmt::error!("mag error: {}", defmt::Debug2Format(&e)),
             }
             embassy_time::Timer::after(embassy_time::Duration::from_millis(20)).await;

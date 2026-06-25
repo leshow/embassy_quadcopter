@@ -1,0 +1,50 @@
+[package]
+name = "embassy_quad"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embassy-executor = "0.10"
+embassy-time = "0.5"
+esp-hal = { version = "1.1", features = ["unstable"] }
+esp-rtos = { version = "0.3", features = ["embassy"] }
+esp-bootloader-esp-idf = { version = "0.5" }
+esp-backtrace = { version = "0.19", features = ["panic-handler", "defmt"] }
+esp-println = { version = "0.17", default-features = false, features = [
+	"jtag-serial",
+	"defmt-espflash",
+] }
+embedded-hal-async = "1.0"
+defmt = "1"
+# esp-radio = { version = "0.18.0" }
+# esp-alloc = { version = "0.10.0" }
+# external non-embassy/hal libs
+icm20948-rs = { version = "0.2.3", features = ["async", "dmp", "defmt"] }
+mpu9250-async = { version = "0.1" }
+uf-ahrs = "0.2.1"
+libm = "0.2.16"
+nalgebra = { version = "0.35", default-features = false, features = [
+	"libm-force",
+] }
+libs = { path = "../libs" }
+
+[features]
+default = ["c3", "dmp"]
+calibrate = [
+] # you will also have to manually edit the .cargo/config.toml to remove --monitor
+dmp = []
+visualize = []
+c3 = [
+	"esp-hal/esp32c3",
+	"esp-rtos/esp32c3",
+	"esp-bootloader-esp-idf/esp32c3",
+	"esp-backtrace/esp32c3",
+	"esp-println/esp32c3",
+]
+c6 = [
+	"esp-hal/esp32c6",
+	"esp-rtos/esp32c6",
+	"esp-bootloader-esp-idf/esp32c6",
+	"esp-backtrace/esp32c6",
+	"esp-println/esp32c6",
+]
