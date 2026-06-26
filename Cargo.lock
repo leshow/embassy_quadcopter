@@ -644,6 +644,7 @@ dependencies = [
  "defmt 1.1.0",
  "embassy-executor",
  "embassy-net",
+ "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-hal-async",
  "esp-alloc",
@@ -1045,6 +1046,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "551f90766e1527edaa0c91e8d559e9e2a60397b545e93357ac61fb31845e5712"
 dependencies = [
+ "allocator-api2",
  "cfg-if",
  "document-features",
  "embassy-executor",
@@ -1055,6 +1057,7 @@ dependencies = [
  "esp-hal",
  "esp-hal-procmacros",
  "esp-metadata-generated",
+ "esp-radio-rtos-driver",
  "esp-rom-sys",
  "esp-sync",
  "portable-atomic",

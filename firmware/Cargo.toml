@@ -7,7 +7,7 @@ edition = "2024"
 embassy-executor = "0.10"
 embassy-time = "0.5"
 esp-hal = { version = "1.1", features = ["unstable"] }
-esp-rtos = { version = "0.3", features = ["embassy"] }
+esp-rtos = { version = "0.3", features = ["embassy", "esp-radio"] }
 esp-bootloader-esp-idf = { version = "0.5" }
 esp-backtrace = { version = "0.19", features = ["panic-handler", "defmt"] }
 esp-println = { version = "0.17", default-features = false, features = [
@@ -19,6 +19,7 @@ defmt = "1"
 esp-radio = { version = "0.18.0", features = ["wifi"] }
 esp-alloc = { version = "0.10.0" }
 embassy-net = { version = "0.9", features = ["udp", "medium-ethernet", "proto-ipv4"] }
+embassy-sync = "0.8"
 static_cell = "2"
 # external non-embassy/hal libs
 icm20948-rs = { version = "0.2.3", features = ["async", "dmp", "defmt"] }

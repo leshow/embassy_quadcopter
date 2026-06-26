@@ -1,17 +1,32 @@
+extern crate alloc;
+
+use alloc::string::ToString;
 use core::{net::Ipv4Addr, str::FromStr};
 
 use embassy_executor::Spawner;
-use embassy_net::{Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4};
+use embassy_net::{
+    Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4,
+    udp::{PacketMetadata, UdpSocket},
+};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use esp_hal::{peripherals::WIFI, rng::Rng};
 use esp_radio::wifi::{
-    AccessPointStationEventInfo, Config, ControllerConfig, Interface, WifiController,
-    ap::AccessPointConfig,
+    AccessPointStationEventInfo, AuthenticationMethod, Config, ControllerConfig, Interface,
+    WifiController, ap::AccessPointConfig,
 };
+use libs::control::ControlPacket;
 use static_cell::StaticCell;
 
-pub const SSID: &str = "esp-quad";
-pub const GW_IP: &str = "192.168.4.1";
+pub const SSID_DEFAULT: &str = "esp-quad";
+pub const GW_IP_DEFAULT: &str = "192.168.4.1";
+pub const UDP_PORT_DEFAULT: u16 = 4444;
+const UDP_PORT_ENV: Option<&'static str> = option_env!("UDP_PORT");
 const GW_IP_ADDR_ENV: Option<&'static str> = option_env!("GATEWAY_IP");
+// set AP_PASSWORD at build time; if unset the AP is open
+const AP_PASSWORD: Option<&'static str> = option_env!("AP_PASSWORD");
+
+// latest control input from the gamepad — None until first packet received
+pub static CONTROLS: Mutex<CriticalSectionRawMutex, Option<ControlPacket>> = Mutex::new(None);
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -21,24 +36,28 @@ macro_rules! mk_static {
 }
 
 pub struct AP {
-    pub stack: Stack<'static>,
+    stack: Stack<'static>,
 }
 
 impl AP {
     /// Initialise the WiFi AP and return an AP holding the network stack.
     /// Call esp_alloc::heap_allocator! in main before this.
     pub async fn init(wifi: WIFI<'static>, spawner: Spawner) -> Self {
-        let gw_ip =
-            Ipv4Addr::from_str(GW_IP_ADDR_ENV.unwrap_or(GW_IP)).expect("no IP given for AP");
-        let ap_config = Config::AccessPoint(AccessPointConfig::default().with_ssid(SSID));
+        let gw_ip = Ipv4Addr::from_str(GW_IP_ADDR_ENV.unwrap_or(GW_IP_DEFAULT))
+            .expect("no IP given for AP");
+        let ap_config = Config::AccessPoint(match AP_PASSWORD {
+            Some(pw) => AccessPointConfig::default()
+                .with_ssid(SSID_DEFAULT)
+                .with_password(pw.to_string())
+                .with_auth_method(AuthenticationMethod::Wpa2Personal),
+            None => AccessPointConfig::default().with_ssid(SSID_DEFAULT),
+        });
 
         let (controller, interfaces) = esp_radio::wifi::new(
             wifi,
             ControllerConfig::default().with_initial_config(ap_config),
         )
         .expect("failed to initialise WiFi");
-
-        let device = interfaces.access_point;
 
         let net_config = embassy_net::Config::ipv4_static(StaticConfigV4 {
             address: Ipv4Cidr::new(gw_ip, 24),
@@ -50,7 +69,7 @@ impl AP {
         let seed = (rng.random() as u64) << 32 | rng.random() as u64;
 
         let (stack, runner) = embassy_net::new(
-            device,
+            interfaces.access_point,
             net_config,
             mk_static!(StackResources<3>, StackResources::<3>::new()),
             seed,
@@ -62,11 +81,16 @@ impl AP {
         stack.wait_config_up().await;
         defmt::info!(
             "AP up - SSID: {}, IP: {}",
-            SSID,
-            GW_IP_ADDR_ENV.unwrap_or(GW_IP)
+            SSID_DEFAULT,
+            GW_IP_ADDR_ENV.unwrap_or(GW_IP_DEFAULT)
         );
 
         Self { stack }
+    }
+
+    /// Spawn the UDP listener task — updates CONTROLS on each valid packet
+    pub fn listen(&self, spawner: Spawner) {
+        spawner.spawn(udp_task(self.stack).expect("udp_task already spawned"));
     }
 }
 
@@ -77,21 +101,11 @@ async fn ap_task(controller: WifiController<'static>) {
             .wait_for_access_point_connected_event_async()
             .await
         {
-            Ok(AccessPointStationEventInfo::Connected(info)) => {
-                defmt::info!(
-                    "[AP TASK] station connected: {:?}",
-                    defmt::Debug2Format(&info)
-                )
+            Ok(AccessPointStationEventInfo::Connected(_)) => defmt::info!("station connected"),
+            Ok(AccessPointStationEventInfo::Disconnected(_)) => {
+                defmt::info!("station disconnected")
             }
-            Ok(AccessPointStationEventInfo::Disconnected(info)) => {
-                defmt::info!(
-                    "[AP TASK] station disconnected: {:?}",
-                    defmt::Debug2Format(&info)
-                )
-            }
-            Err(err) => {
-                defmt::error!("[AP TASK] wifi error: {:?}", defmt::Debug2Format(&err))
-            }
+            Err(_) => {}
         }
     }
 }
@@ -99,4 +113,35 @@ async fn ap_task(controller: WifiController<'static>) {
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     runner.run().await
+}
+
+#[embassy_executor::task]
+async fn udp_task(stack: Stack<'static>) {
+    let rx_meta = mk_static!([PacketMetadata; 4], [PacketMetadata::EMPTY; 4]);
+    let rx_buf = mk_static!([u8; 512], [0u8; 512]);
+    let tx_meta = mk_static!([PacketMetadata; 4], [PacketMetadata::EMPTY; 4]);
+    let tx_buf = mk_static!([u8; 512], [0u8; 512]);
+
+    let port = UDP_PORT_ENV
+        .map(|o| o.parse::<u16>())
+        .transpose()
+        .expect("failed to parse UDP_PORT_ENV")
+        .unwrap_or(UDP_PORT_DEFAULT);
+
+    let mut socket = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
+    socket.bind(port).expect("UDP bind failed");
+    defmt::info!("UDP listening on port {}", UDP_PORT_DEFAULT);
+
+    let mut buf = [0u8; ControlPacket::SIZE];
+    loop {
+        match socket.recv_from(&mut buf).await {
+            Ok((n, _)) if n == ControlPacket::SIZE => {
+                if let Some(packet) = ControlPacket::from_bytes(&buf) {
+                    *CONTROLS.lock().await = Some(packet);
+                }
+            }
+            Ok((n, _)) => defmt::warn!("unexpected UDP packet size: {}", n),
+            Err(_) => {}
+        }
+    }
 }

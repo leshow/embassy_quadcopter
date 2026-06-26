@@ -2,6 +2,7 @@
 #![cfg_attr(feature = "calibrate", allow(unused))]
 #![no_std]
 #![no_main]
+extern crate alloc;
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
