@@ -1,7 +1,5 @@
-use std::net::UdpSocket;
 
-use anyhow::Context;
-use gilrs::{Button, Event, Filter, Gilrs, ev};
+use gilrs::{Event, Gilrs};
 use tracing::info;
 
 fn main() -> anyhow::Result<()> {
