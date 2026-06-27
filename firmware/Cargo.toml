@@ -18,7 +18,11 @@ embedded-hal-async = "1.0"
 defmt = "1"
 esp-radio = { version = "0.18.0", features = ["wifi"] }
 esp-alloc = { version = "0.10.0" }
-embassy-net = { version = "0.9", features = ["udp", "medium-ethernet", "proto-ipv4"] }
+embassy-net = { version = "0.9", features = [
+	"udp",
+	"medium-ethernet",
+	"proto-ipv4",
+] }
 embassy-sync = "0.8"
 static_cell = "2"
 # external non-embassy/hal libs
@@ -35,6 +39,7 @@ libs = { path = "../libs" }
 default = ["c3", "dmp"]
 calibrate = [
 ] # you will also have to manually edit the .cargo/config.toml to remove --monitor
+test_motors = []
 dmp = []
 visualize = []
 c3 = [

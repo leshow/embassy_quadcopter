@@ -30,12 +30,12 @@ mod fusion;
 mod sensors;
 mod wifi;
 
-use crate::sensors::Sensor;
 #[cfg(not(feature = "dmp"))]
 use crate::{
     fusion::FusionBuilder,
     sensors::{ImuRead, ImuReadMag},
 };
+use crate::{sensors::Sensor, wifi::AP};
 
 const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
 
@@ -62,7 +62,7 @@ const LOG_EVERY_N: u32 = {
 };
 
 #[esp_rtos::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
     // allocate heap for wifi
@@ -73,30 +73,8 @@ async fn main(_spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    // #[cfg(not(feature = "calibrate"))]
-    // let (led_fwd_pitch, led_bwd_pitch, led_fwd_roll, led_bwd_roll) = (
-    //     gpio::Output::new(
-    //         peripherals.GPIO10,
-    //         gpio::Level::Low,
-    //         esp_hal::gpio::OutputConfig::default(),
-    //     ),
-    //     gpio::Output::new(
-    //         peripherals.GPIO9,
-    //         gpio::Level::Low,
-    //         esp_hal::gpio::OutputConfig::default(),
-    //     ),
-    //     gpio::Output::new(
-    //         peripherals.GPIO0,
-    //         gpio::Level::Low,
-    //         esp_hal::gpio::OutputConfig::default(),
-    //     ),
-    //     gpio::Output::new(
-    //         peripherals.GPIO1,
-    //         gpio::Level::Low,
-    //         esp_hal::gpio::OutputConfig::default(),
-    //     ),
-    // );
-
+    // start AP and spawn UDP listen task
+    AP::init(peripherals.WIFI, spawner).await.listen(spawner);
     let i2c = I2c::new(
         peripherals.I2C0,
         I2cConfig::default().with_frequency(Rate::from_khz(400)),
@@ -107,7 +85,7 @@ async fn main(_spawner: Spawner) {
     .into_async();
 
     // Wait for ICM20948 to power up before init
-    Timer::after(Duration::from_millis(100)).await;
+    Timer::after_millis(100).await;
 
     #[cfg(not(any(feature = "calibrate", feature = "visualize")))]
     {
@@ -115,10 +93,10 @@ async fn main(_spawner: Spawner) {
         run(
             i2c,
             peripherals.LEDC,
-            peripherals.GPIO10,
-            peripherals.GPIO9,
-            peripherals.GPIO0,
             peripherals.GPIO1,
+            peripherals.GPIO10,
+            peripherals.GPIO0,
+            peripherals.GPIO9,
             int_pin,
         )
         .await;
@@ -155,7 +133,8 @@ async fn run(
         rear_right_pin,
         front_left_pin,
         front_right_pin,
-    );
+    )
+    .await;
     // ICM20948
     let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
         .await
@@ -224,7 +203,7 @@ async fn software_loop(mut sensor: Sensor20948<'_>) {
             Err(e) => defmt::error!("imu error: {}", defmt::Debug2Format(&e)),
         }
 
-        Timer::after(Duration::from_millis(LOOP_PERIOD_MS)).await;
+        Timer::after_millis(LOOP_PERIOD_MS).await;
     }
 }
 
@@ -298,44 +277,7 @@ async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>, int_pin: gpio::Input<'stat
     run_dmp(sensor, int_pin).await;
 }
 
-#[allow(dead_code)]
-fn set_lights(
-    roll_deg: f32,
-    pitch_deg: f32,
-    led_fwd_roll: &mut gpio::Output<'_>,
-    led_bwd_roll: &mut gpio::Output<'_>,
-    led_fwd_pitch: &mut gpio::Output<'_>,
-    led_bwd_pitch: &mut gpio::Output<'_>,
-) {
-    // LEDs show pitch (forward/backward tilt)
-    let (fwd, bwd) = if pitch_deg.abs() > fusion::STEEP_DEG {
-        (true, true)
-    } else if pitch_deg > fusion::FLAT_DEG {
-        (true, false)
-    } else if pitch_deg < -fusion::FLAT_DEG {
-        (false, true)
-    } else {
-        (false, false)
-    };
-
-    led_fwd_pitch.set_level(fwd.into());
-    led_bwd_pitch.set_level(bwd.into());
-
-    // LEDs show roll
-    let (fwd, bwd) = if roll_deg.abs() > fusion::STEEP_DEG {
-        (true, true)
-    } else if roll_deg > fusion::FLAT_DEG {
-        (true, false)
-    } else if roll_deg < -fusion::FLAT_DEG {
-        (false, true)
-    } else {
-        (false, false)
-    };
-    led_fwd_roll.set_level(fwd.into());
-    led_bwd_roll.set_level(bwd.into());
-}
-
-fn init_pwm_motors<
+async fn init_pwm_motors<
     RL: PeripheralOutput<'static>,
     RR: PeripheralOutput<'static>,
     FL: PeripheralOutput<'static>,
@@ -396,5 +338,35 @@ fn init_pwm_motors<
         })
         .expect("front right motor pwm init failed");
 
+    #[cfg(feature = "test_motors")]
+    {
+        let test_spin = 20;
+        defmt::info!("testing front left");
+        chan_fl
+            .start_duty_fade(0, test_spin, 2_000)
+            .expect("failed to set duty");
+        Timer::after_secs(3).await;
+        defmt::info!("testing front right");
+        chan_fr
+            .start_duty_fade(0, test_spin, 2_000)
+            .expect("failed to set duty");
+        Timer::after_secs(3).await;
+        defmt::info!("testing rear left");
+        chan_rl
+            .start_duty_fade(0, test_spin, 2_000)
+            .expect("failed to set duty");
+        Timer::after_secs(3).await;
+        defmt::info!("testing rear right");
+        chan_rr
+            .start_duty_fade(0, test_spin, 2_000)
+            .expect("failed to set duty");
+        defmt::info!("motors initialized: all channels {}%", test_spin);
+        Timer::after_secs(3).await;
+
+        chan_fl.set_duty(0).expect("failed to set duty");
+        chan_fr.set_duty(0).expect("failed to set duty");
+        chan_rl.set_duty(0).expect("failed to set duty");
+        chan_rr.set_duty(0).expect("failed to set duty");
+    }
     defmt::info!("motors initialized: all channels {}%", duty);
 }
