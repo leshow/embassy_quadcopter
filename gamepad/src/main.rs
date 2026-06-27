@@ -1,4 +1,3 @@
-
 use gilrs::{Event, Gilrs};
 use tracing::info;
 
