@@ -5,7 +5,7 @@
 extern crate alloc;
 
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
+use embassy_time::Timer;
 use esp_backtrace as _;
 use esp_hal::{
     Async,

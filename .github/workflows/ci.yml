@@ -1,0 +1,115 @@
+on: [push, pull_request]
+
+name: CI
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      # check all three workspaces
+      - run: cargo fmt --all -- --check
+      - run: cargo fmt --all --manifest-path gamepad/Cargo.toml -- --check
+      - run: cargo fmt --all --manifest-path visualizer/Cargo.toml -- --check
+
+  check-firmware:
+    name: Check firmware (${{ matrix.chip }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - chip: esp32c3
+            target: riscv32imc-unknown-none-elf
+            features: c3,dmp
+          - chip: esp32c6
+            target: riscv32imac-unknown-none-elf
+            features: c6,dmp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p embassy_quad --target ${{ matrix.target }} --no-default-features --features ${{ matrix.features }}
+
+  clippy-firmware:
+    name: Clippy firmware (${{ matrix.chip }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - chip: esp32c3
+            target: riscv32imc-unknown-none-elf
+            features: c3,dmp
+          - chip: esp32c6
+            target: riscv32imac-unknown-none-elf
+            features: c6,dmp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p embassy_quad --target ${{ matrix.target }} --no-default-features --features ${{ matrix.features }} -- -D warnings
+
+  check-gamepad:
+    name: Check gamepad
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gamepad
+      # gilrs uses pkg-config to find libudev at build.rs time
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - run: cargo check --manifest-path gamepad/Cargo.toml
+
+  clippy-gamepad:
+    name: Clippy gamepad
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gamepad
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - run: cargo clippy --manifest-path gamepad/Cargo.toml -- -D warnings
+
+  check-visualizer:
+    name: Check visualizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: visualizer
+      # miniquad needs X11/GL headers for its build script
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl-dev libxrandr-dev
+      - run: cargo check --manifest-path visualizer/Cargo.toml
+
+  clippy-visualizer:
+    name: Clippy visualizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: visualizer
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl-dev libxrandr-dev
+      - run: cargo clippy --manifest-path visualizer/Cargo.toml -- -D warnings
