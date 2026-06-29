@@ -14,7 +14,7 @@ use esp_radio::wifi::{
     AccessPointStationEventInfo, AuthenticationMethod, Config, ControllerConfig, Interface,
     WifiController, ap::AccessPointConfig,
 };
-use libs::control::ControlPacket;
+use libs::control::{self, ControlPacket};
 use static_cell::StaticCell;
 
 pub const SSID_DEFAULT: &str = "esp-quad";
@@ -132,10 +132,10 @@ async fn udp_task(stack: Stack<'static>) {
     socket.bind(port).expect("UDP bind failed");
     defmt::info!("UDP listening on port {}", UDP_PORT_DEFAULT);
 
-    let mut buf = [0u8; ControlPacket::SIZE];
+    let mut buf = [0u8; control::DEFAULT_SIZE];
     loop {
         match socket.recv_from(&mut buf).await {
-            Ok((n, _)) if n == ControlPacket::SIZE => {
+            Ok((n, _)) if n == ControlPacket::<17>::SIZE => {
                 if let Some(packet) = ControlPacket::from_bytes(&buf) {
                     *CONTROLS.lock().await = Some(packet);
                 }
