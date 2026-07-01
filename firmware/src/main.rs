@@ -136,9 +136,13 @@ async fn run(
     )
     .await;
     // ICM20948
-    let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
-        .await
-        .expect("ICM20948 init failed");
+    let sensor = match Sensor::init_icm20948(i2c, LOOP_PERIOD_MS).await {
+        Ok(s) => s,
+        Err(e) => {
+            defmt::error!("ICM20948 init failed: {}", defmt::Debug2Format(&e));
+            panic!("ICM20948 init failed");
+        }
+    };
 
     #[cfg(not(feature = "dmp"))]
     {

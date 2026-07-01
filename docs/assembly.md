@@ -8,6 +8,7 @@
 - 4× 10kΩ resistor (gate pull-down, one per MOSFET)
 - 4× 8520 brushed DC motor
 - 5V boost converter
+- 470μF electrolytic capacitor
 - 1S LiPo battery (3.7V)
 - 55mm or 65mm propellers
 
@@ -17,36 +18,39 @@
 
 ### Power
 
-| From                      | To                  | Notes                              |
-| ------------------------- | ------------------- | ---------------------------------- |
-| Battery +                 | Boost converter IN+ |                                    |
-| Battery −                 | Boost converter IN− |                                    |
-| Boost converter 5V out    | ESP32 VIN           | 5V regulated                       |
-| Boost converter GND       | ESP32 GND           | Common ground for all logic        |
-| Boost converter BAT+      | MOSFET Source ×4    | Raw battery rail to motor switches |
-| Boost converter BAT− /GND | All GND lines       | Shared ground for motors and logic |
+| From                   | To                     | Notes                                  |
+| ---------------------- | ---------------------- | -------------------------------------- |
+| Battery +              | Boost converter IN+    |                                        |
+| Battery −              | Boost converter IN−    |                                        |
+| Boost converter 5V out | ESP32 VIN              | 5V regulated                           |
+| Boost converter GND    | ESP32 GND              | Common ground for all logic            |
+| 470μF cap +            | Boost converter 5V out | Positive leg to 5V out                 |
+| 470μF cap −            | Boost converter GND    | Prevents brownout during motor inrush  |
+| Battery +              | MOSFET Drain ×4        | Raw battery rail to motor switches     |
+| Battery − / GND        | All GND lines          | Shared ground for motors and logic     |
 
 ### ICM-20948 IMU
 
-| ICM-20948 | ESP32-C3 | Notes                       |
-| --------- | -------- | --------------------------- |
-| VIN       | 3.3V     | Regulated output from ESP32 |
-| GND       | GND      |                             |
-| SDA       | GPIO20   | I2C data                    |
-| SCL       | GPIO21   | I2C clock (400 kHz)         |
-| INT       | GPIO6    | Data-ready interrupt        |
-| CS        | GND      | Tie low to select I2C mode  |
+| ICM-20948 | ESP32-C3 | Notes                              |
+| --------- | -------- | ---------------------------------- |
+| VIN       | 3.3V     | Regulated output from ESP32        |
+| GND       | GND      |                                    |
+| SDA       | GPIO20   | I2C data                           |
+| SCL       | GPIO21   | I2C clock (400 kHz)                |
+| INT       | GPIO6    | Data-ready interrupt               |
+| CS        | 3.3V     | Tie HIGH to select I2C mode        |
+| SDO       | 3.3V     | Sets I2C address to 0x69 (AD0 high)|
 
 ### Motors (via 100N03A MOSFET)
 
-| Motor       | Gate (ESP32) | Gate-Source    | Source     | Drain   |
-| ----------- | ------------ | -------------- | ---------- | ------- |
-| Front Left  | GPIO0        | 10k pull-down  | Boost BAT+ | Motor + |
-| Front Right | GPIO9        | 10k pull-down  | Boost BAT+ | Motor + |
-| Rear Left   | GPIO1        | 10k pull-down  | Boost BAT+ | Motor + |
-| Rear Right  | GPIO10       | 10k pull-down  | Boost BAT+ | Motor + |
+| Motor       | Gate (ESP32) | Gate-Source    | Drain      | Source |
+| ----------- | ------------ | -------------- | ---------- | ------ |
+| Front Left  | GPIO0        | 10k pull-down  | Battery +  | GND    |
+| Front Right | GPIO9        | 10k pull-down  | Battery +  | GND    |
+| Rear Left   | GPIO1        | 10k pull-down  | Battery +  | GND    |
+| Rear Right  | GPIO10       | 10k pull-down  | Battery +  | GND    |
 
-Motor − on all four motors connects to common GND.
+Motor + on all four motors connects directly to Battery +. Motor − connects to MOSFET Drain.
 
 ---
 
@@ -57,14 +61,16 @@ Motor − on all four motors connects to common GND.
 ```text
                         ┌─────────────────────────┐
                         │      Boost Converter    │
-  Battery + ───── IN+ ──┤                         ├── 5V out ───► ESP32 VIN
-  Battery − ───── IN− ──┤                         ├── GND ──────► ESP32 GND
-                        │                         ├── BAT+ ────┬─ MOSFET FL Source
-                        │                         │            ├─ MOSFET FR Source
-                        │                         │            ├─ MOSFET RL Source
-                        │                         │            └─ MOSFET RR Source
-                        │                         ├── BAT−/GND ── all GND lines
-                        └─────────────────────────┘
+  Battery + ───── IN+ ──┤                         ├── 5V out ───┬──► ESP32 VIN
+  Battery − ───── IN− ──┤                         ├── GND ───┬──┼──► ESP32 GND
+                        └─────────────────────────┘         │  │
+                                                            │  └─[470μF]─┘
+                                                            └─── Battery −
+                                                                    │
+  Battery + ──────────────────────────────────────────┬─ MOSFET Drain FL
+                                                      ├─ MOSFET Drain FR
+                                                      ├─ MOSFET Drain RL
+                                                      └─ MOSFET Drain RR
 ```
 
 ### ESP32-C3 Connections
@@ -72,8 +78,9 @@ Motor − on all four motors connects to common GND.
 ```text
           ┌───────────────────────┐
    3.3V ──┤                       ├──► ICM-20948 VIN
+   3.3V ──┤                       ├──► ICM-20948 CS
+   3.3V ──┤       ESP32-C3        ├──► ICM-20948 SDO
     GND ──┤                       ├──► ICM-20948 GND
-    GND ──┤       ESP32-C3        ├──► ICM-20948 CS
           │                       │
  GPIO20 ──┤ SDA                   ├──► ICM-20948 SDA
  GPIO21 ──┤ SCL                   ├──► ICM-20948 SCL
@@ -109,27 +116,28 @@ Motor − on all four motors connects to common GND.
 ### MOSFET Wiring (per motor, repeated ×4)
 
 ```text
-  ESP32 GPIO ──────────── Gate
+  Battery + ──────────────────────── Motor +
+                                       │
+                                    [Motor]
+                                       │
+                                    Motor − ──── Drain
+                                              [100N03A]
+  ESP32 GPIO ──────────── Gate         Source ──── GND
                         ┌──┘
                      [10kΩ]        pull-down holds gate low during boot/reset
                         └──┐
-  Boost BAT+ ──────────── Source
-                           │
-                        [100N03A]
-                           │
-                         Drain ──────── Motor +
-                                            │
-                                         [Motor]
-                                            │
-  GND ──────────────────────────────────── Motor −
+                          GND
 ```
 
 ---
 
 ## Assembly Notes
 
-- Tie ICM-20948 CS to GND before power-on — a floating CS pin can boot the chip into SPI mode
+- Tie ICM-20948 CS to 3.3V — CS HIGH selects I2C mode; CS low puts the chip in SPI mode and it will not respond to I2C
+- Tie ICM-20948 SDO to 3.3V — this sets the I2C address to 0x69, matching the firmware default
 - The 10kΩ gate–source resistor on each MOSFET holds the gate low when the ESP32 GPIO is floating (boot/reset), preventing unintended motor spin-up
-- All four MOSFET sources share the BAT+ rail from the boost converter; run a single wire to a bus point and branch from there
+- MOSFETs are wired low-side: Drain to Motor −, Source to GND, Motor + connects directly to Battery +. N-channel MOSFETs cannot be used as high-side switches with a 3.3V gate signal
+- Solder the 470μF electrolytic capacitor across the boost converter 5V output and GND, as close to those pads as possible (positive leg to 5V). This prevents the ESP32 from browning out during motor inrush current spikes
+- All four MOSFET sources share GND; run a single wire to a bus point and branch from there
 - Keep IMU signal wires (SDA/SCL/INT) routed away from motor wires to reduce noise coupling
 - The ESP32 3.3V output powers the IMU; do not connect IMU VIN to the 5V boost output

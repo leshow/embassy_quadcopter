@@ -142,11 +142,10 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
                 })
                 .await?;
 
-            let dmp_config = DmpConfig::nine_axis()
+            let dmp_config = DmpConfig::six_axis()
                 .with_calibrated_gyro()
-                // adds bytes to packet and fills up fifo queue faster
                 // .with_calibrated_mag()
-                .with_sample_rate(150);
+                .with_sample_rate(200);
 
             driver.dmp_configure(&dmp_config).await.unwrap();
             driver.reset_fifo().await.unwrap();
