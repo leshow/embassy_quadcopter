@@ -42,26 +42,39 @@ const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and M
 
 static TIMER: StaticCell<timer::Timer<'static, LowSpeed>> = StaticCell::new();
 
+const fn parse_u64(s: &str) -> u64 {
+    // unfortunately parse is not a const fn
+    let b = s.as_bytes();
+    let mut n = 0u64;
+    let mut i = 0;
+    // no for loops in const either? damn.
+    while i < b.len() {
+        n = n * 10 + (b[i] - b'0') as u64;
+        i += 1;
+    }
+    n
+}
+
 /// How many loop iterations to skip between log lines.
 /// Override at build time: `LOG_RATE_MS=200 cargo flash-c3` (default: 500 ms).
 const LOG_EVERY_N: u32 = {
-    const fn parse_u64(s: &str) -> u64 {
-        // unfortunately parse is not a const fn
-        let b = s.as_bytes();
-        let mut n = 0u64;
-        let mut i = 0;
-        // no for loops in const either? damn.
-        while i < b.len() {
-            n = n * 10 + (b[i] - b'0') as u64;
-            i += 1;
-        }
-        n
-    }
     let ms = match option_env!("LOG_RATE_MS") {
         Some(s) => parse_u64(s),
         None => 500,
     };
     (ms / LOOP_PERIOD_MS) as u32
+};
+
+/// cap on throttle for testing
+const THROTTLE_CAP: u8 = {
+    match option_env!("THROTTLE_CAP") {
+        Some(s) => {
+            let v = parse_u64(s);
+            assert!(v <= 100, "THROTTLE_CAP must be 0..=100");
+            v as u8
+        }
+        None => 100, // no cap default
+    }
 };
 
 #[esp_rtos::main]
@@ -102,7 +115,7 @@ async fn main(spawner: Spawner) {
             peripherals.LEDC,
             peripherals.GPIO1,
             peripherals.GPIO10,
-            peripherals.GPIO0,
+            peripherals.GPIO5,
             peripherals.GPIO9,
             int_pin,
         )
@@ -268,11 +281,11 @@ async fn read_dmp(
             }
             Some(quat)
         }
-        // Err(icm20948::Error::FifoOverflow) => {
-        //     defmt::warn!("DMP FIFO overflow — resetting");
-        //     sensor.reset_fifo().await.ok();
-        //     None
-        // }
+        Err(icm20948::Error::FifoOverflow) => {
+            defmt::warn!("DMP FIFO overflow — resetting");
+            sensor.reset_fifo().await.ok();
+            None
+        }
         Err(e) => {
             defmt::error!("DMP read error: {}", defmt::Debug2Format(&e));
             None
@@ -288,7 +301,7 @@ async fn run_dmp(
     motors: Motors<'_>,
 ) {
     let mut log_counter: u32 = 0;
-    let mut last_packet = None;
+    let mut last_packet: Option<libs::control::ControlPacket> = None;
 
     loop {
         int_pin.wait_for_high().await;
@@ -297,17 +310,21 @@ async fn run_dmp(
         }
         let controls = wifi::CONTROLS.lock().await;
         if let Some(pkt) = *controls {
+            if last_packet.is_some_and(|s| !s.armed()) && pkt.flags().armed() {
+                defmt::info!("ARMED - fly away!");
+            }
             if pkt.flags().armed() {
                 use libs::control::ControlPacket;
 
+                defmt::trace!("got control pkt {:?}", defmt::Debug2Format(&pkt));
                 let ControlPacket {
                     throttle,
-                    roll,
-                    pitch,
-                    yaw,
+                    roll: _, // TODO
+                    pitch: _,
+                    yaw: _,
                     ..
                 } = pkt;
-                motors.set_all_duty(throttle.min(20)); // safety cap during testing
+                motors.set_all_duty(throttle.min(THROTTLE_CAP)); // safety cap during testing
             } else {
                 // disarm
                 motors.set_all_duty(0);

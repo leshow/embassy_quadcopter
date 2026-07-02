@@ -45,7 +45,7 @@
 
 | Motor       | Gate (ESP32) | Gate-Source    | Drain      | Source |
 | ----------- | ------------ | -------------- | ---------- | ------ |
-| Front Left  | GPIO0        | 10k pull-down  | Battery +  | GND    |
+| Front Left  | GPIO5        | 10k pull-down  | Battery +  | GND    |
 | Front Right | GPIO9        | 10k pull-down  | Battery +  | GND    |
 | Rear Left   | GPIO1        | 10k pull-down  | Battery +  | GND    |
 | Rear Right  | GPIO10       | 10k pull-down  | Battery +  | GND    |
@@ -86,7 +86,7 @@ Motor + on all four motors connects directly to Battery +. Motor − connects to
  GPIO21 ──┤ SCL                   ├──► ICM-20948 SCL
   GPIO6 ──┤ INT                   ├──► ICM-20948 INT
           │                       │
-  GPIO0 ──┤ FL PWM                ├──► MOSFET FL Gate
+  GPIO5 ──┤ FL PWM                ├──► MOSFET FL Gate
   GPIO9 ──┤ FR PWM                ├──► MOSFET FR Gate
   GPIO1 ──┤ RL PWM                ├──► MOSFET RL Gate
  GPIO10 ──┤ RR PWM                ├──► MOSFET RR Gate
@@ -99,7 +99,7 @@ Motor + on all four motors connects directly to Battery +. Motor − connects to
                     FRONT
                       ▲
                       │
-     FL (GPIO0)       │       FR (GPIO9)
+     FL (GPIO5)       │       FR (GPIO9)
          ◎────────────┼────────────◎
          │            │            │
          │         ┌──┴──┐         │
