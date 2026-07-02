@@ -23,6 +23,7 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_println as _;
+use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -38,6 +39,8 @@ use crate::{
 use crate::{sensors::Sensor, wifi::AP};
 
 const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
+
+static TIMER: StaticCell<timer::Timer<'static, LowSpeed>> = StaticCell::new();
 
 /// How many loop iterations to skip between log lines.
 /// Override at build time: `LOG_RATE_MS=200 cargo flash-c3` (default: 500 ms).
@@ -127,8 +130,24 @@ async fn run(
     front_right_pin: impl gpio::interconnect::PeripheralOutput<'static>,
     int_pin: gpio::Input<'static>,
 ) {
-    init_pwm_motors(
-        ledc,
+    let mut ledc = Ledc::new(ledc);
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+
+    // Promote the configured timer to static
+    let mut timer = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    timer
+        .configure(timer::config::Config {
+            duty: timer::config::Duty::Duty10Bit,
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(78),
+        })
+        .expect("timer init failed");
+
+    let timer_static = TIMER.init(timer);
+    let motors = Motors::init_pwm(
+        &ledc,
+        timer_static,
+        0,
         rear_left_pin,
         rear_right_pin,
         front_left_pin,
@@ -147,10 +166,10 @@ async fn run(
     #[cfg(not(feature = "dmp"))]
     {
         let _ = int_pin;
-        software_loop(sensor).await;
+        software_loop(sensor, motors).await;
     }
     #[cfg(feature = "dmp")]
-    run_dmp(sensor, int_pin).await;
+    run_dmp(sensor, int_pin, motors).await;
 }
 
 type Sensor20948<'a> = Sensor<icm20948::Icm20948Driver<icm20948::I2cInterface<I2c<'a, Async>>>>;
@@ -212,7 +231,11 @@ async fn software_loop(mut sensor: Sensor20948<'_>) {
 }
 
 #[cfg(feature = "dmp")]
-async fn run_dmp(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>) {
+async fn run_dmp(
+    mut sensor: Sensor20948<'_>,
+    mut int_pin: gpio::Input<'static>,
+    motors: Motors<'_>,
+) {
     let mut log_counter: u32 = 0;
 
     loop {
@@ -281,96 +304,92 @@ async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>, int_pin: gpio::Input<'stat
     run_dmp(sensor, int_pin).await;
 }
 
-async fn init_pwm_motors<
-    RL: PeripheralOutput<'static>,
-    RR: PeripheralOutput<'static>,
-    FL: PeripheralOutput<'static>,
-    FR: PeripheralOutput<'static>,
->(
-    ledc: LEDC<'static>,
-    rear_left_pin: RL,
-    rear_right_pin: RR,
-    front_left_pin: FL,
-    front_right_pin: FR,
-) {
-    let mut ledc = Ledc::new(ledc);
-    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+pub struct Motors<'a> {
+    fl: esp_hal::ledc::channel::Channel<'a, LowSpeed>,
+    fr: esp_hal::ledc::channel::Channel<'a, LowSpeed>,
+    rl: esp_hal::ledc::channel::Channel<'a, LowSpeed>,
+    rr: esp_hal::ledc::channel::Channel<'a, LowSpeed>,
+}
 
-    let duty = 0;
-    let mut lstimer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
-    lstimer0
-        .configure(timer::config::Config {
-            duty: timer::config::Duty::Duty10Bit,
-            clock_source: timer::LSClockSource::APBClk,
-            frequency: Rate::from_khz(78),
-        })
-        .expect("timer init failed");
-
-    let mut chan_rl = ledc.channel(channel::Number::Channel0, rear_left_pin);
-    chan_rl
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
+impl<'a> Motors<'a> {
+    async fn init_pwm<
+        RL: PeripheralOutput<'a>,
+        RR: PeripheralOutput<'a>,
+        FL: PeripheralOutput<'a>,
+        FR: PeripheralOutput<'a>,
+    >(
+        ledc: &Ledc<'a>,
+        timer: &'a timer::Timer<'a, LowSpeed>,
+        duty_pct: u8,
+        rear_left_pin: RL,
+        rear_right_pin: RR,
+        front_left_pin: FL,
+        front_right_pin: FR,
+    ) -> Self {
+        let mut rl = ledc.channel(channel::Number::Channel0, rear_left_pin);
+        rl.configure(channel::config::Config {
+            timer,
+            duty_pct,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("rear left motor pwm init failed");
 
-    let mut chan_rr = ledc.channel(channel::Number::Channel1, rear_right_pin);
-    chan_rr
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
+        let mut rr = ledc.channel(channel::Number::Channel1, rear_right_pin);
+        rr.configure(channel::config::Config {
+            timer,
+            duty_pct,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("rear right motor pwm init failed");
 
-    let mut chan_fl = ledc.channel(channel::Number::Channel2, front_left_pin);
-    chan_fl
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
+        let mut fl = ledc.channel(channel::Number::Channel2, front_left_pin);
+        fl.configure(channel::config::Config {
+            timer,
+            duty_pct,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("front left motor pwm init failed");
 
-    let mut chan_fr = ledc.channel(channel::Number::Channel3, front_right_pin);
-    chan_fr
-        .configure(channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
+        let mut fr = ledc.channel(channel::Number::Channel3, front_right_pin);
+        fr.configure(channel::config::Config {
+            timer,
+            duty_pct,
             drive_mode: esp_hal::gpio::DriveMode::PushPull,
         })
         .expect("front right motor pwm init failed");
 
-    #[cfg(feature = "test_motors")]
-    {
-        let test_spin = 20;
-        defmt::info!("testing front left");
-        chan_fl
-            .start_duty_fade(0, test_spin, 2_000)
-            .expect("failed to set duty");
-        Timer::after_secs(3).await;
-        defmt::info!("testing front right");
-        chan_fr
-            .start_duty_fade(0, test_spin, 2_000)
-            .expect("failed to set duty");
-        Timer::after_secs(3).await;
-        defmt::info!("testing rear left");
-        chan_rl
-            .start_duty_fade(0, test_spin, 2_000)
-            .expect("failed to set duty");
-        Timer::after_secs(3).await;
-        defmt::info!("testing rear right");
-        chan_rr
-            .start_duty_fade(0, test_spin, 2_000)
-            .expect("failed to set duty");
-        defmt::info!("motors initialized: all channels {}%", test_spin);
-        Timer::after_secs(3).await;
+        #[cfg(feature = "test_motors")]
+        {
+            let test_spin = 20;
+            defmt::info!("testing front left");
+            chan_fl
+                .start_duty_fade(0, test_spin, 2_000)
+                .expect("failed to set duty");
+            Timer::after_secs(3).await;
+            defmt::info!("testing front right");
+            chan_fr
+                .start_duty_fade(0, test_spin, 2_000)
+                .expect("failed to set duty");
+            Timer::after_secs(3).await;
+            defmt::info!("testing rear left");
+            chan_rl
+                .start_duty_fade(0, test_spin, 2_000)
+                .expect("failed to set duty");
+            Timer::after_secs(3).await;
+            defmt::info!("testing rear right");
+            chan_rr
+                .start_duty_fade(0, test_spin, 2_000)
+                .expect("failed to set duty");
+            defmt::info!("motors initialized: all channels {}%", test_spin);
+            Timer::after_secs(3).await;
 
-        chan_fl.set_duty(0).expect("failed to set duty");
-        chan_fr.set_duty(0).expect("failed to set duty");
-        chan_rl.set_duty(0).expect("failed to set duty");
-        chan_rr.set_duty(0).expect("failed to set duty");
+            chan_fl.set_duty(0).expect("failed to set duty");
+            chan_fr.set_duty(0).expect("failed to set duty");
+            chan_rl.set_duty(0).expect("failed to set duty");
+            chan_rr.set_duty(0).expect("failed to set duty");
+        }
+        defmt::info!("motors initialized: all channels {}%", duty_pct);
+
+        Self { fl, fr, rl, rr }
     }
-    defmt::info!("motors initialized: all channels {}%", duty);
 }

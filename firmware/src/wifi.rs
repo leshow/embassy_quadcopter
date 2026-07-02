@@ -137,6 +137,7 @@ async fn udp_task(stack: Stack<'static>) {
         match socket.recv_from(&mut buf).await {
             Ok((n, _)) if n == ControlPacket::<17>::SIZE => {
                 if let Some(packet) = ControlPacket::from_bytes(&buf) {
+                    defmt::debug!("packet received {:?}", defmt::Debug2Format(&packet));
                     *CONTROLS.lock().await = Some(packet);
                 }
             }
