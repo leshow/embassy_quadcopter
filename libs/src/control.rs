@@ -1,12 +1,13 @@
 //! control packet shared between the gamepad binary and ESP32 firmware
-pub const DEFAULT_SIZE: usize = 17;
+pub const MAGIC: [u8; 4] = *b"QUAD";
+pub const DEFAULT_SIZE: usize = 18; // 4 (magic) + 1 (throttle) + 4+4+4 (roll/pitch/yaw f32 be) + 1 (flags)
 
 /// control packet sent from the gamepad PC to the ESP32 over UDP.
-/// Serialized as big-endian: 4× f32 + 1× u8 = 17 bytes.
+/// Serialized as big-endian: 1× u8 + 3× f32 + 1× u8 = 14 bytes.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ControlPacket<const N: usize = DEFAULT_SIZE> {
-    /// Throttle: 0.0 (min) to 1.0 (max)
-    pub throttle: f32,
+pub struct ControlPacket {
+    /// Throttle: 0 (min) to 100 (max), as a duty cycle percentage
+    pub throttle: u8,
     /// Roll: -1.0 (left) to 1.0 (right)
     pub roll: f32,
     /// Pitch: -1.0 (forward) to 1.0 (backward)
@@ -41,29 +42,43 @@ impl Flags {
     }
 }
 
-impl<const N: usize> ControlPacket<N> {
-    pub const SIZE: usize = N;
+impl ControlPacket {
+    pub fn new(throttle: u8, roll: f32, pitch: f32, yaw: f32, armed: bool) -> Self {
+        let mut flags = Flags(0);
+        flags.set_armed(armed);
+        Self {
+            throttle,
+            roll,
+            pitch,
+            yaw,
+            flags,
+        }
+    }
 
-    pub fn to_bytes(&self) -> [u8; N] {
-        let mut buf = [0u8; N];
-        buf[0..4].copy_from_slice(&self.throttle.to_be_bytes());
-        buf[4..8].copy_from_slice(&self.roll.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.pitch.to_be_bytes());
-        buf[12..16].copy_from_slice(&self.yaw.to_be_bytes());
-        buf[16] = Flags::to_bytes(&self.flags);
+    pub fn to_bytes(&self) -> [u8; DEFAULT_SIZE] {
+        let mut buf = [0u8; DEFAULT_SIZE];
+        buf[0..4].copy_from_slice(&MAGIC);
+        buf[4] = self.throttle;
+        buf[5..9].copy_from_slice(&self.roll.to_be_bytes());
+        buf[9..13].copy_from_slice(&self.pitch.to_be_bytes());
+        buf[13..17].copy_from_slice(&self.yaw.to_be_bytes());
+        buf[17] = Flags::to_bytes(&self.flags);
         buf
     }
 
     pub fn from_bytes(buf: &[u8]) -> Option<Self> {
-        if buf.len() < Self::SIZE {
+        if buf.len() < DEFAULT_SIZE {
+            return None;
+        }
+        if buf[0..4] != MAGIC {
             return None;
         }
         Some(Self {
-            throttle: f32::from_be_bytes(buf[0..4].try_into().ok()?),
-            roll: f32::from_be_bytes(buf[4..8].try_into().ok()?),
-            pitch: f32::from_be_bytes(buf[8..12].try_into().ok()?),
-            yaw: f32::from_be_bytes(buf[12..16].try_into().ok()?),
-            flags: Flags::from_bytes(buf[16]),
+            throttle: buf[4],
+            roll: f32::from_be_bytes(buf[5..9].try_into().ok()?),
+            pitch: f32::from_be_bytes(buf[9..13].try_into().ok()?),
+            yaw: f32::from_be_bytes(buf[13..17].try_into().ok()?),
+            flags: Flags::from_bytes(buf[17]),
         })
     }
 
@@ -75,8 +90,11 @@ impl<const N: usize> ControlPacket<N> {
         self.flags().armed()
     }
 
-    pub fn set_armed(&self, b: bool) {
-        self.flags().set_armed(b);
+    pub fn set_armed(&mut self, b: bool) {
+        self.flags.set_armed(b);
+        if self.armed() {
+            self.throttle = 0;
+        }
     }
 }
 

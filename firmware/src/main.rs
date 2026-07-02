@@ -68,16 +68,20 @@ const LOG_EVERY_N: u32 = {
 async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
-    // allocate heap for wifi
-    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
-    esp_alloc::heap_allocator!(size: 36 * 1024);
+    // wifi heap only needed when running the AP, visualize mode just logs over USB
+    #[cfg(not(feature = "visualize"))]
+    {
+        esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
+        esp_alloc::heap_allocator!(size: 36 * 1024);
+    }
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    // start AP and spawn UDP listen task
+    #[cfg(not(feature = "visualize"))]
     AP::init(peripherals.WIFI, spawner).await.listen(spawner);
+
     let i2c = I2c::new(
         peripherals.I2C0,
         I2cConfig::default().with_frequency(Rate::from_khz(400)),
@@ -166,7 +170,7 @@ async fn run(
     #[cfg(not(feature = "dmp"))]
     {
         let _ = int_pin;
-        software_loop(sensor, motors).await;
+        software_loop(sensor).await;
     }
     #[cfg(feature = "dmp")]
     run_dmp(sensor, int_pin, motors).await;
@@ -230,6 +234,53 @@ async fn software_loop(mut sensor: Sensor20948<'_>) {
     }
 }
 
+// reads one DMP frame, logs the quaternion
+// returns None when no usable data was produced this cycle
+#[cfg(feature = "dmp")]
+async fn read_dmp(
+    sensor: &mut Sensor20948<'_>,
+    log_counter: &mut u32,
+) -> Option<icm20948::dmp::Quaternion> {
+    use icm20948::dmp::DmpData;
+    match sensor.read_dmp().await {
+        Ok(Some(DmpData {
+            quaternion_6axis: Some(quat),
+            ..
+        }))
+        | Ok(Some(DmpData {
+            quaternion_9axis: Some(quat),
+            ..
+        })) => {
+            let euler = quat.to_euler_angles();
+            *log_counter += 1;
+            if *log_counter >= LOG_EVERY_N {
+                *log_counter = 0;
+                defmt::debug!(
+                    "DMP w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
+                    quat.w,
+                    quat.x,
+                    quat.y,
+                    quat.z,
+                    euler.roll * fusion::RAD_TO_DEG,
+                    euler.pitch * fusion::RAD_TO_DEG,
+                    euler.yaw * fusion::RAD_TO_DEG,
+                );
+            }
+            Some(quat)
+        }
+        // Err(icm20948::Error::FifoOverflow) => {
+        //     defmt::warn!("DMP FIFO overflow — resetting");
+        //     sensor.reset_fifo().await.ok();
+        //     None
+        // }
+        Err(e) => {
+            defmt::error!("DMP read error: {}", defmt::Debug2Format(&e));
+            None
+        }
+        Ok(_) => None,
+    }
+}
+
 #[cfg(feature = "dmp")]
 async fn run_dmp(
     mut sensor: Sensor20948<'_>,
@@ -237,55 +288,42 @@ async fn run_dmp(
     motors: Motors<'_>,
 ) {
     let mut log_counter: u32 = 0;
+    let mut last_packet = None;
 
     loop {
-        use icm20948::dmp::DmpData;
-
         int_pin.wait_for_high().await;
-        match sensor.read_dmp().await {
-            Ok(Some(DmpData {
-                quaternion_9axis: Some(quat),
-                ..
-            })) => {
-                let euler = quat.to_euler_angles();
-                log_counter += 1;
-                if log_counter >= LOG_EVERY_N {
-                    log_counter = 0;
-                    defmt::debug!(
-                        "DMP 9axis - w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
-                        quat.w,
-                        quat.x,
-                        quat.y,
-                        quat.z,
-                        euler.roll * fusion::RAD_TO_DEG,
-                        euler.pitch * fusion::RAD_TO_DEG,
-                        euler.yaw * fusion::RAD_TO_DEG,
-                    );
-                }
-            }
-            Ok(Some(DmpData {
-                quaternion_6axis: Some(quat),
-                ..
-            })) => {
-                let euler = quat.to_euler_angles();
-                log_counter += 1;
-                if log_counter >= LOG_EVERY_N {
-                    log_counter = 0;
-                    defmt::debug!(
-                        "DMP 6axis - w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
-                        quat.w,
-                        quat.x,
-                        quat.y,
-                        quat.z,
-                        euler.roll * fusion::RAD_TO_DEG,
-                        euler.pitch * fusion::RAD_TO_DEG,
-                        euler.yaw * fusion::RAD_TO_DEG,
-                    );
-                }
-            }
-            Ok(_) => {}
-            Err(e) => defmt::error!("DMP read error: {}", defmt::Debug2Format(&e)),
+        if read_dmp(&mut sensor, &mut log_counter).await.is_none() {
+            continue;
         }
+        let controls = wifi::CONTROLS.lock().await;
+        if let Some(pkt) = *controls {
+            if pkt.flags().armed() {
+                use libs::control::ControlPacket;
+
+                let ControlPacket {
+                    throttle,
+                    roll,
+                    pitch,
+                    yaw,
+                    ..
+                } = pkt;
+                motors.set_all_duty(throttle.min(20)); // safety cap during testing
+            } else {
+                // disarm
+                motors.set_all_duty(0);
+            }
+            last_packet = Some(pkt);
+        }
+    }
+}
+
+// visualize-only DMP loop: just log orientation, no motor control, no WiFi
+#[cfg(all(feature = "dmp", feature = "visualize"))]
+async fn run_dmp_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>) {
+    let mut log_counter: u32 = 0;
+    loop {
+        int_pin.wait_for_high().await;
+        read_dmp(&mut sensor, &mut log_counter).await;
     }
 }
 
@@ -301,7 +339,7 @@ async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>, int_pin: gpio::Input<'stat
         software_loop(sensor).await;
     }
     #[cfg(feature = "dmp")]
-    run_dmp(sensor, int_pin).await;
+    run_dmp_visualizer(sensor, int_pin).await;
 }
 
 pub struct Motors<'a> {
@@ -362,34 +400,46 @@ impl<'a> Motors<'a> {
         {
             let test_spin = 20;
             defmt::info!("testing front left");
-            chan_fl
-                .start_duty_fade(0, test_spin, 2_000)
+            fl.start_duty_fade(0, test_spin, 2_000)
                 .expect("failed to set duty");
             Timer::after_secs(3).await;
             defmt::info!("testing front right");
-            chan_fr
-                .start_duty_fade(0, test_spin, 2_000)
+            fr.start_duty_fade(0, test_spin, 2_000)
                 .expect("failed to set duty");
             Timer::after_secs(3).await;
             defmt::info!("testing rear left");
-            chan_rl
-                .start_duty_fade(0, test_spin, 2_000)
+            rl.start_duty_fade(0, test_spin, 2_000)
                 .expect("failed to set duty");
             Timer::after_secs(3).await;
             defmt::info!("testing rear right");
-            chan_rr
-                .start_duty_fade(0, test_spin, 2_000)
+            rr.start_duty_fade(0, test_spin, 2_000)
                 .expect("failed to set duty");
             defmt::info!("motors initialized: all channels {}%", test_spin);
             Timer::after_secs(3).await;
 
-            chan_fl.set_duty(0).expect("failed to set duty");
-            chan_fr.set_duty(0).expect("failed to set duty");
-            chan_rl.set_duty(0).expect("failed to set duty");
-            chan_rr.set_duty(0).expect("failed to set duty");
+            fl.set_duty(0).expect("failed to set duty");
+            fr.set_duty(0).expect("failed to set duty");
+            rl.set_duty(0).expect("failed to set duty");
+            rr.set_duty(0).expect("failed to set duty");
         }
         defmt::info!("motors initialized: all channels {}%", duty_pct);
 
         Self { fl, fr, rl, rr }
+    }
+
+    pub fn set_all_duty(&self, duty: u8) {
+        let results = [
+            self.fl.set_duty(duty),
+            self.fr.set_duty(duty),
+            self.rl.set_duty(duty),
+            self.rr.set_duty(duty),
+        ];
+        if results.iter().any(|r| r.is_err()) {
+            defmt::error!("motor set_duty({}) failed — shutting down", duty);
+            self.fl.set_duty(0).ok();
+            self.fr.set_duty(0).ok();
+            self.rl.set_duty(0).ok();
+            self.rr.set_duty(0).ok();
+        }
     }
 }

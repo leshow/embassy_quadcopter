@@ -119,6 +119,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             use embassy_time::Delay;
             use icm20948::dmp::DmpConfig;
 
+            let dmp_hz = 150;
             let mut int_cfg = InterruptConfig::data_ready_only();
             int_cfg.dmp = true;
             driver.configure_interrupts(&int_cfg).await.unwrap();
@@ -145,7 +146,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             let dmp_config = DmpConfig::six_axis()
                 .with_calibrated_gyro()
                 // .with_calibrated_mag()
-                .with_sample_rate(200);
+                .with_sample_rate(dmp_hz);
 
             driver.dmp_configure(&dmp_config).await.unwrap();
             driver.reset_fifo().await.unwrap();
@@ -153,7 +154,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
             // clear any interrupt that fired before we started listening
             let _ = driver.read_interrupt_status().await;
-            defmt::info!("ICM20948 DMP enabled (9-axis, 225Hz)");
+            defmt::info!("ICM20948 DMP enabled {}Hz", dmp_hz);
         }
 
         #[cfg(not(feature = "dmp"))]
@@ -167,6 +168,11 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
         &mut self,
     ) -> Result<Option<icm20948::dmp::DmpData>, icm20948::Error<I::Error>> {
         self.driver.dmp_read_fifo().await
+    }
+
+    #[cfg(feature = "dmp")]
+    pub async fn reset_fifo(&mut self) -> Result<(), icm20948::Error<I::Error>> {
+        self.driver.reset_fifo().await
     }
 }
 

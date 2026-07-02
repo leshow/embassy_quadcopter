@@ -100,6 +100,44 @@ By default, sensor readings from the ICM-20948 are sent to the ESP32-C3 where ei
 DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features visualize | (cd visualizer && cargo run)
 ```
 
+## Gamepad control
+
+The `gamepad/` crate is a PC-side sender that reads a gamepad and streams control packets to the drone over UDP.
+
+The drone runs a wifi AP (`esp-quad`, WPA2) with a static IP of `192.168.4.1`. There is no DHCP server, so you must assign yourself a static IP when connecting. The trick is to do this in a single `nmcli con add` — adding security and static IP separately doesn't work reliably:
+
+```sh
+nmcli con add type wifi con-name esp-quad ssid esp-quad \
+  wifi-sec.key-mgmt wpa-psk \
+  wifi-sec.psk <same as AP_PASSWORD> \
+  ipv4.method manual \
+  ipv4.addresses "192.168.4.2/24" \
+  ipv4.gateway "192.168.4.1"
+```
+
+The AP password is set at build time via the `AP_PASSWORD` environment variable. If unset, the AP is open (remove the `wifi-sec.*` lines above).
+
+Once the profile exists, connecting is just:
+
+```sh
+nmcli dev wifi rescan
+nmcli con up esp-quad
+```
+
+Then run the gamepad sender:
+
+```sh
+cd gamepad && cargo run
+```
+
+The right stick Y axis controls throttle (center = 0%, full up = 100%). The Start button toggles arm. Motors only spin when armed and throttle is above 0.
+
+The drone IP and port can be overridden at build time:
+
+```sh
+GATEWAY_IP=192.168.4.1 UDP_PORT=4444 cargo run
+```
+
 ## LLM usage
 
 Docs and tests are sometimes generated with the use of LLMs, along with explanation/discovery, but the purpose of this project is to actually learn, so the code is still written by a human (hi!)

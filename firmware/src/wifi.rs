@@ -16,15 +16,6 @@ use esp_radio::wifi::{
 };
 use libs::control::{self, ControlPacket};
 use static_cell::StaticCell;
-
-pub const SSID_DEFAULT: &str = "esp-quad";
-pub const GW_IP_DEFAULT: &str = "192.168.4.1";
-pub const UDP_PORT_DEFAULT: u16 = 4444;
-const UDP_PORT_ENV: Option<&'static str> = option_env!("UDP_PORT");
-const GW_IP_ADDR_ENV: Option<&'static str> = option_env!("GATEWAY_IP");
-// set AP_PASSWORD at build time; if unset the AP is open
-const AP_PASSWORD: Option<&'static str> = option_env!("AP_PASSWORD");
-
 // latest control input from the gamepad — None until first packet received
 pub static CONTROLS: Mutex<CriticalSectionRawMutex, Option<ControlPacket>> = Mutex::new(None);
 
@@ -43,14 +34,14 @@ impl AP {
     /// Initialise the WiFi AP and return an AP holding the network stack.
     /// Call esp_alloc::heap_allocator! in main before this.
     pub async fn init(wifi: WIFI<'static>, spawner: Spawner) -> Self {
-        let gw_ip = Ipv4Addr::from_str(GW_IP_ADDR_ENV.unwrap_or(GW_IP_DEFAULT))
+        let gw_ip = Ipv4Addr::from_str(libs::GW_IP_ADDR_ENV.unwrap_or(libs::GW_IP_DEFAULT))
             .expect("no IP given for AP");
-        let ap_config = Config::AccessPoint(match AP_PASSWORD {
+        let ap_config = Config::AccessPoint(match libs::AP_PASSWORD {
             Some(pw) => AccessPointConfig::default()
-                .with_ssid(SSID_DEFAULT)
+                .with_ssid(libs::SSID_DEFAULT)
                 .with_password(pw.to_string())
                 .with_auth_method(AuthenticationMethod::Wpa2Personal),
-            None => AccessPointConfig::default().with_ssid(SSID_DEFAULT),
+            None => AccessPointConfig::default().with_ssid(libs::SSID_DEFAULT),
         });
 
         let (controller, interfaces) = esp_radio::wifi::new(
@@ -81,8 +72,8 @@ impl AP {
         stack.wait_config_up().await;
         defmt::info!(
             "AP up - SSID: {}, IP: {}",
-            SSID_DEFAULT,
-            GW_IP_ADDR_ENV.unwrap_or(GW_IP_DEFAULT)
+            libs::SSID_DEFAULT,
+            libs::GW_IP_ADDR_ENV.unwrap_or(libs::GW_IP_DEFAULT)
         );
 
         Self { stack }
@@ -122,22 +113,22 @@ async fn udp_task(stack: Stack<'static>) {
     let tx_meta = mk_static!([PacketMetadata; 4], [PacketMetadata::EMPTY; 4]);
     let tx_buf = mk_static!([u8; 512], [0u8; 512]);
 
-    let port = UDP_PORT_ENV
+    let port = libs::UDP_PORT_ENV
         .map(|o| o.parse::<u16>())
         .transpose()
         .expect("failed to parse UDP_PORT_ENV")
-        .unwrap_or(UDP_PORT_DEFAULT);
+        .unwrap_or(libs::UDP_PORT_DEFAULT);
 
     let mut socket = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
     socket.bind(port).expect("UDP bind failed");
-    defmt::info!("UDP listening on port {}", UDP_PORT_DEFAULT);
+    defmt::info!("UDP listening on port {}", libs::UDP_PORT_DEFAULT);
 
-    let mut buf = [0u8; control::DEFAULT_SIZE];
+    let mut buf = [0u8; control::DEFAULT_SIZE]; // sized to exact packet; rejects anything else
     loop {
         match socket.recv_from(&mut buf).await {
-            Ok((n, _)) if n == ControlPacket::<17>::SIZE => {
+            Ok((n, _)) if n == control::DEFAULT_SIZE => {
                 if let Some(packet) = ControlPacket::from_bytes(&buf) {
-                    defmt::debug!("packet received {:?}", defmt::Debug2Format(&packet));
+                    defmt::trace!("packet received {:?}", defmt::Debug2Format(&packet));
                     *CONTROLS.lock().await = Some(packet);
                 }
             }
