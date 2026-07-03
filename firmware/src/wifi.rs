@@ -9,6 +9,7 @@ use embassy_net::{
     udp::{PacketMetadata, UdpSocket},
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+use embassy_time::Instant;
 use esp_hal::{peripherals::WIFI, rng::Rng};
 use esp_radio::wifi::{
     AccessPointStationEventInfo, AuthenticationMethod, Config, ControllerConfig, Interface,
@@ -16,8 +17,10 @@ use esp_radio::wifi::{
 };
 use libs::control::{self, ControlPacket};
 use static_cell::StaticCell;
-// latest control input from the gamepad — None until first packet received
-pub static CONTROLS: Mutex<CriticalSectionRawMutex, Option<ControlPacket>> = Mutex::new(None);
+
+// latest control input from the gamepad, stamped at receive time for failsafe
+pub static CONTROLS: Mutex<CriticalSectionRawMutex, Option<(ControlPacket, Instant)>> =
+    Mutex::new(None);
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -129,7 +132,7 @@ async fn udp_task(stack: Stack<'static>) {
             Ok((n, _)) if n == control::DEFAULT_SIZE => {
                 if let Some(packet) = ControlPacket::from_bytes(&buf) {
                     defmt::trace!("packet received {:?}", defmt::Debug2Format(&packet));
-                    *CONTROLS.lock().await = Some(packet);
+                    *CONTROLS.lock().await = Some((packet, Instant::now()));
                 }
             }
             Ok((n, _)) => defmt::warn!("unexpected UDP packet size: {}", n),

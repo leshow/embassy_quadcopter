@@ -7,9 +7,10 @@ use uf_ahrs::{
     Vqf as UfVqf, VqfParams,
 };
 
-pub const FLAT_DEG: f32 = 10.0; // dead-zone around flat
-pub const STEEP_DEG: f32 = 50.0; // "both LEDs on" threshold
-pub const RAD_TO_DEG: f32 = 180.0 / core::f32::consts::PI;
+pub const FLAT_DEG: f32 = 10.; // dead-zone around flat
+pub const STEEP_DEG: f32 = 50.; // "both LEDs on" threshold
+pub const RAD_TO_DEG: f32 = 180. / core::f32::consts::PI;
+pub const DEG_TO_RAD: f32 = core::f32::consts::PI / 180.;
 
 const ALPHA_DEFAULT: f32 = 0.98; // complementary filter: trust gyro 98%, accel 2%
 const BETA_DEFAULT: f32 = 0.1; // Madgwick beta gain
