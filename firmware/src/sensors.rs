@@ -63,8 +63,8 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
         // Non-DMP mode uses ±500dps/±4g with loop-rate-based ODR dividers.
         #[cfg(feature = "dmp")]
         {
-            // 111Hz DLPF cuts motor vibration noise; full_scale and sample_rate_div
-            // will be overwritten by dmp_configure so we match DMP's expected values
+            // accel 111Hz / gyro 51Hz DLPF — full_scale and sample_rate_div
+            // are overwritten by dmp_configure; only DLPF survives into DMP mode
             driver
                 .configure_accelerometer(AccelConfig {
                     full_scale: AccelFullScale::G4,
@@ -76,7 +76,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             driver
                 .configure_gyroscope(GyroConfig {
                     full_scale: GyroFullScale::Dps2000,
-                    dlpf: GyroDlpf::Hz197,
+                    dlpf: GyroDlpf::Hz51,
                     dlpf_enable: true,
                     sample_rate_div: 0,
                 })
