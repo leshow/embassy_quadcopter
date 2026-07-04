@@ -2,7 +2,7 @@ use std::{net::UdpSocket, time::Duration};
 
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use libs::control::ControlPacket;
-use tracing::info;
+use tracing::{Value, info};
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -31,6 +31,7 @@ fn main() -> anyhow::Result<()> {
                     pkt.throttle = (value.max(0.0) * 100.0) as u8;
                     info!("throttle: {}", pkt.throttle);
                 }
+                EventType::AxisChanged(Axis::LeftStickX, value, _) => {}
                 // start button toggles arm
                 EventType::ButtonPressed(Button::Start, _) => {
                     pkt.set_armed(!pkt.armed());

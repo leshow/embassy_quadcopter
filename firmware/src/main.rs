@@ -14,8 +14,8 @@ use esp_hal::{
     interrupt::software::SoftwareInterruptControl,
     ledc::{
         LSGlobalClkSource, Ledc, LowSpeed,
-        channel::{self, ChannelIFace},
-        timer::{self, TimerIFace},
+        channel::{self, ChannelHW, ChannelIFace},
+        timer::{self, TimerIFace, config::Duty},
     },
     peripherals::LEDC,
     ram,
@@ -41,6 +41,9 @@ use crate::{
 use crate::{sensors::Sensor, wifi::AP};
 
 const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
+// if changing duty cycle, change this value. currently 10 bit resolution
+const PWM_BITS: u32 = 10;
+const PWM_MAX_DUTY: u32 = (1 << PWM_BITS) - 1;
 
 static TIMER: StaticCell<timer::Timer<'static, LowSpeed>> = StaticCell::new();
 
@@ -78,6 +81,26 @@ const THROTTLE_CAP: u8 = {
         None => 100, // no cap default
     }
 };
+
+const fn pwm_duty_config(bits: u32) -> Duty {
+    match bits {
+        1 => Duty::Duty1Bit,
+        2 => Duty::Duty2Bit,
+        3 => Duty::Duty3Bit,
+        4 => Duty::Duty4Bit,
+        5 => Duty::Duty5Bit,
+        6 => Duty::Duty6Bit,
+        7 => Duty::Duty7Bit,
+        8 => Duty::Duty8Bit,
+        9 => Duty::Duty9Bit,
+        10 => Duty::Duty10Bit,
+        11 => Duty::Duty11Bit,
+        12 => Duty::Duty12Bit,
+        13 => Duty::Duty13Bit,
+        14 => Duty::Duty14Bit,
+        _ => panic!("failed to pick PWM duty"),
+    }
+}
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
@@ -156,7 +179,7 @@ async fn run(
     let mut timer = ledc.timer::<LowSpeed>(timer::Number::Timer0);
     timer
         .configure(timer::config::Config {
-            duty: timer::config::Duty::Duty10Bit,
+            duty: pwm_duty_config(PWM_BITS),
             clock_source: timer::LSClockSource::APBClk,
             frequency: Rate::from_khz(78),
         })
@@ -350,42 +373,23 @@ impl<'a> Motors<'a> {
         Self { fl, fr, rl, rr }
     }
 
-    pub fn set_all_duty(&self, duty: u8) {
-        let results = [
-            self.fl.set_duty(duty),
-            self.fr.set_duty(duty),
-            self.rl.set_duty(duty),
-            self.rr.set_duty(duty),
-        ];
-        if results.iter().any(|r| r.is_err()) {
-            defmt::error!("motor set_duty({}) failed — shutting down", duty);
-            self.fl.set_duty(0).ok();
-            self.fr.set_duty(0).ok();
-            self.rl.set_duty(0).ok();
-            self.rr.set_duty(0).ok();
-        }
+    pub fn set_all_duty(&self, duty: u32) {
+        self.fl.set_duty_hw(duty);
+        self.fr.set_duty_hw(duty);
+        self.rl.set_duty_hw(duty);
+        self.rr.set_duty_hw(duty);
     }
 
     // set per-motor duties independently
-    pub fn set_motors(&self, fl: u8, fr: u8, rl: u8, rr: u8) {
-        let results = [
-            self.fl.set_duty(fl),
-            self.fr.set_duty(fr),
-            self.rl.set_duty(rl),
-            self.rr.set_duty(rr),
-        ];
-        if results.iter().any(|r| r.is_err()) {
-            defmt::error!(
-                "motor set_duty({},{},{},{}) failed — shutting down",
-                fl,
-                fr,
-                rl,
-                rr
-            );
-            self.fl.set_duty(0).ok();
-            self.fr.set_duty(0).ok();
-            self.rl.set_duty(0).ok();
-            self.rr.set_duty(0).ok();
-        }
+    pub fn set_motors(&self, fl: f32, fr: f32, rl: f32, rr: f32) {
+        // TODO: this THROTTLE_CAP is more a safety feature for my poor fingers during testing
+        let duty = |v: f32| {
+            (v.clamp(0., 1.) * (crate::THROTTLE_CAP as f32 / 100.) * crate::PWM_MAX_DUTY as f32)
+                as u32
+        };
+        self.fl.set_duty_hw(duty(fl));
+        self.fr.set_duty_hw(duty(fr));
+        self.rl.set_duty_hw(duty(rl));
+        self.rr.set_duty_hw(duty(rr));
     }
 }

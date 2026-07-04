@@ -251,6 +251,13 @@ pub async fn run_dmp(
             target_yaw,
         );
 
+        // like controlTorque / motor mixing (flix)
+        let t = pkt.throttle as f32 / 100.0;
+        if t < 0.05 {
+            motors.set_all_duty(0);
+            continue;
+        }
+
         // up-vector cross product gives roll/pitch error (flix rotationVectorBetween)
         // arg order matches flix: actual * target (swapped gives negated error vector)
         let att_err = rotate_up(&quat).cross(&rotate_up(&target_quat)); // flix Vector::rotationVectorBetween — cross product of two up-vectors gives the attitude error
@@ -263,13 +270,6 @@ pub async fn run_dmp(
         let roll_torque = roll_pid.update(roll_rate_sp - g.x, dt);
         let pitch_torque = pitch_pid.update(pitch_rate_sp - g.y, dt);
         let yaw_torque = yaw_pid.update(yaw_rate_sp - g.z, dt);
-
-        // like controlTorque / motor mixing (flix)
-        let t = pkt.throttle as f32 / 100.0;
-        if t < 0.05 {
-            motors.set_all_duty(0);
-            continue;
-        }
 
         let mut fl = t + roll_torque - pitch_torque + yaw_torque;
         let mut fr = t - roll_torque - pitch_torque - yaw_torque;
@@ -286,8 +286,10 @@ pub async fn run_dmp(
             rr -= excess;
         }
 
-        // TODO: this is more a safety feature for my poor fingers during testing
-        let duty = |v: f32| (v.clamp(0.0, 1.0) * crate::THROTTLE_CAP as f32) as u8;
+        let duty = |v: f32| {
+            (v.clamp(0., 1.) * (crate::THROTTLE_CAP as f32 / 100.) * crate::PWM_MAX_DUTY as f32)
+                as u32
+        };
         defmt::trace!(
             "torques roll={} pitch={} yaw={} | mix fl={} fr={} rl={} rr={} | duty fl={} fr={} rl={} rr={}",
             roll_torque,
@@ -300,9 +302,9 @@ pub async fn run_dmp(
             duty(fl),
             duty(fr),
             duty(rl),
-            duty(rr)
+            duty(rr),
         );
-        motors.set_motors(duty(fl), duty(fr), duty(rl), duty(rr));
+        motors.set_motors(fl, fr, rl, rr);
     }
 }
 
