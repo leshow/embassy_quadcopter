@@ -286,10 +286,7 @@ pub async fn run_dmp(
             rr -= excess;
         }
 
-        let duty = |v: f32| {
-            (v.clamp(0., 1.) * (crate::THROTTLE_CAP as f32 / 100.) * crate::PWM_MAX_DUTY as f32)
-                as u32
-        };
+        let (dfl, dfr, drl, drr) = motors.set_motors(fl, fr, rl, rr);
         defmt::trace!(
             "torques roll={} pitch={} yaw={} | mix fl={} fr={} rl={} rr={} | duty fl={} fr={} rl={} rr={}",
             roll_torque,
@@ -299,12 +296,11 @@ pub async fn run_dmp(
             fr,
             rl,
             rr,
-            duty(fl),
-            duty(fr),
-            duty(rl),
-            duty(rr),
+            dfl,
+            dfr,
+            drl,
+            drr,
         );
-        motors.set_motors(fl, fr, rl, rr);
     }
 }
 
