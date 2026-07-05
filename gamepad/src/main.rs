@@ -1,8 +1,8 @@
-use std::{net::UdpSocket, time::Duration};
+use std::{net::UdpSocket, thread, time::Duration};
 
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use libs::control::ControlPacket;
-use tracing::{Value, info};
+use tracing::info;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -13,41 +13,67 @@ fn main() -> anyhow::Result<()> {
         info!("{} is {:?}", gamepad.name(), gamepad.power_info());
     }
 
-    let (ip, port) = (libs::get_ip(), libs::get_port());
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect((ip, port))?;
-    info!("sending to {}:{}", ip, port);
-
-    let mut pkt = ControlPacket::new(0, 0.0, 0.0, 0.0, false);
-
     loop {
-        // block up to 20ms waiting for input, then send current state regardless
-        while let Some(Event { event, .. }) =
-            gilrs.next_event_blocking(Some(Duration::from_millis(20)))
-        {
-            match event {
-                // upper half only: center = 0%, full up = 100%
-                EventType::AxisChanged(Axis::RightStickY, value, _) => {
-                    pkt.throttle = (value.max(0.0) * 100.0) as u8;
-                    info!("throttle: {}", pkt.throttle);
-                }
-                EventType::AxisChanged(Axis::LeftStickX, value, _) => {}
-                // start button toggles arm
-                EventType::ButtonPressed(Button::Start, _) => {
-                    pkt.set_armed(!pkt.armed());
-                    info!("armed: {}", pkt.armed());
-                }
-                EventType::Disconnected => {
-                    info!("gamepad disconnected — disarming");
-                    pkt.throttle = 0;
-                    pkt.set_armed(false);
-                }
-                EventType::Connected => info!("gamepad connected"),
-                _ => {}
+        let (ip, port) = (libs::get_ip(), libs::get_port());
+        let socket = match UdpSocket::bind("0.0.0.0:0").and_then(|s| {
+            s.connect((ip, port))?;
+            Ok(s)
+        }) {
+            Ok(s) => {
+                info!("connected to {}:{}", ip, port);
+                s
             }
-        }
-        if let Err(e) = socket.send(&pkt.to_bytes()) {
-            info!("send error: {e}");
+            Err(e) => {
+                info!("connect failed: {e}, retrying in 200ms...");
+                thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+        };
+
+        let mut pkt = ControlPacket::new(0, 0.0, 0.0, 0.0, false);
+
+        'inner: loop {
+            // block up to 20ms waiting for input, then send current state regardless
+            while let Some(Event { event, .. }) =
+                gilrs.next_event_blocking(Some(Duration::from_millis(20)))
+            {
+                match event {
+                    // upper half only: center = 0%, full up = 100%
+                    EventType::AxisChanged(Axis::RightStickY, value, _) => {
+                        pkt.throttle = (value.max(0.0) * 100.0) as u8;
+                        info!("throttle: {}", pkt.throttle);
+                    }
+                    EventType::AxisChanged(Axis::LeftStickX, value, _) => {
+                        pkt.roll = value;
+                        info!("roll: {}", value);
+                    }
+                    EventType::AxisChanged(Axis::LeftStickY, value, _) => {
+                        pkt.pitch = value;
+                        info!("pitch: {}", value);
+                    }
+                    EventType::AxisChanged(Axis::RightStickX, val, _) => {
+                        pkt.yaw = val;
+                        info!("yaw: {}", val);
+                    }
+                    // start button toggles arm
+                    EventType::ButtonPressed(Button::Start, _) => {
+                        pkt.set_armed(!pkt.armed());
+                        info!("armed: {}", pkt.armed());
+                    }
+                    EventType::Disconnected => {
+                        info!("gamepad disconnected — disarming");
+                        pkt.throttle = 0;
+                        pkt.set_armed(false);
+                        break 'inner;
+                    }
+                    EventType::Connected => info!("gamepad connected"),
+                    _ => {}
+                }
+            }
+            if let Err(e) = socket.send(&pkt.to_bytes()) {
+                info!("send error: {e}");
+                break 'inner;
+            }
         }
     }
 }

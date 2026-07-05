@@ -1,3 +1,4 @@
+use embassy_time::{Duration, Instant};
 use esp_hal::gpio;
 use nalgebra::Vector3;
 
@@ -11,7 +12,7 @@ const MAX_TILT_RAD: f32 = 25.0 * fusion::DEG_TO_RAD;
 
 // outer loop P gains, matches flix ROLL_P / YAW_P
 const ANGLE_P_ROLL_PITCH: f32 = 6.0;
-const ANGLE_P_YAW: f32 = 3.0;
+const ANGLE_P_YAW: f32 = 0.5;
 
 /// PID
 ///
@@ -166,14 +167,14 @@ pub async fn run_dmp(
     let mut log_counter: u32 = 0;
 
     // inner rate PIDs, gains match flix ROLLRATE / PITCHRATE / YAWRATE
-    let mut roll_pid = Pid::new(0.05, 0.2, 0.001, 0.3);
-    let mut pitch_pid = Pid::new(0.05, 0.2, 0.001, 0.3);
-    let mut yaw_pid = Pid::new(0.3, 0.0, 0.0, 0.3);
+    let mut roll_pid = Pid::new(0.05, 0.0, 0.001, 0.3);
+    let mut pitch_pid = Pid::new(0.05, 0.0, 0.001, 0.3);
+    let mut yaw_pid = Pid::new(0.1, 0.0, 0.0, 0.3);
 
     let mut target_yaw: f32 = 0.0;
     let mut yaw_init = false;
     let mut last_armed = false;
-    let mut last_instant: Option<embassy_time::Instant> = None;
+    let mut last_instant: Option<Instant> = None;
 
     loop {
         int_pin.wait_for_high().await;
@@ -183,7 +184,7 @@ pub async fn run_dmp(
             None => continue,
         };
 
-        let now = embassy_time::Instant::now();
+        let now = Instant::now();
         let dt = last_instant
             .map(|t| now.duration_since(t).as_micros() as f32 / 1_000_000.0)
             .unwrap_or(0.0);
@@ -191,11 +192,7 @@ pub async fn run_dmp(
 
         // snapshot controls — failsafe: zero motors if no packet or packet is stale (>500 ms)
         let pkt = match *wifi::CONTROLS.lock().await {
-            Some((p, received_at))
-                if received_at.elapsed() < embassy_time::Duration::from_millis(500) =>
-            {
-                p
-            }
+            Some((p, received_at)) if received_at.elapsed() < Duration::from_millis(500) => p,
             _ => {
                 motors.set_all_duty(0);
                 continue;
@@ -225,11 +222,17 @@ pub async fn run_dmp(
 
         let euler = quat.to_euler_angles();
         let actual_yaw = euler.yaw;
+        let t = pkt.throttle as f32 / 100.0;
 
         // latch heading on first armed tick (flix: yawTarget initialised from attitude.getYaw())
         if !yaw_init {
             target_yaw = actual_yaw;
             yaw_init = true;
+        }
+
+        // while near the ground keep target tracking actual so handling the drone doesn't build a large error
+        if t < 0.15 {
+            target_yaw = actual_yaw;
         }
 
         // heading hold: only update target when yaw stick is active (matches flix interpretControls)
@@ -252,7 +255,6 @@ pub async fn run_dmp(
         );
 
         // like controlTorque / motor mixing (flix)
-        let t = pkt.throttle as f32 / 100.0;
         if t < 0.05 {
             motors.set_all_duty(0);
             continue;
@@ -285,6 +287,13 @@ pub async fn run_dmp(
             rl -= excess;
             rr -= excess;
         }
+
+        // keep all motors spinning — prevents one motor stalling due to large attitude error at low throttle
+        let motor_min = 0.05;
+        fl = fl.max(motor_min);
+        fr = fr.max(motor_min);
+        rl = rl.max(motor_min);
+        rr = rr.max(motor_min);
 
         let (dfl, dfr, drl, drr) = motors.set_motors(fl, fr, rl, rr);
         defmt::trace!(
