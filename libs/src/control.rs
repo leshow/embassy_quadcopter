@@ -1,8 +1,8 @@
-//! control packet shared between the gamepad binary and ESP32 firmware
+//! control packet shared between the ground control binary and ESP32 firmware
 pub const MAGIC: [u8; 4] = *b"QUAD";
 pub const DEFAULT_SIZE: usize = 18; // 4 (magic) + 1 (throttle) + 4+4+4 (roll/pitch/yaw f32 be) + 1 (flags)
 
-/// control packet sent from the gamepad PC to the ESP32 over UDP.
+/// control packet sent from the ground control PC to the ESP32 over UDP.
 /// Serialized as big-endian: 1× u8 + 3× f32 + 1× u8 = 14 bytes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ControlPacket {

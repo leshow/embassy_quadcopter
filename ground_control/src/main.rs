@@ -8,7 +8,7 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let mut gilrs = Gilrs::new().map_err(|e| anyhow::anyhow!("{}", e))?;
-    info!("starting up gamepad");
+    info!("starting up ground_control");
     for (_id, gamepad) in gilrs.gamepads() {
         info!("{} is {:?}", gamepad.name(), gamepad.power_info());
     }
@@ -39,19 +39,19 @@ fn main() -> anyhow::Result<()> {
             {
                 match event {
                     // upper half only: center = 0%, full up = 100%
-                    EventType::AxisChanged(Axis::RightStickY, value, _) => {
+                    EventType::AxisChanged(Axis::LeftStickY, value, _) => {
                         pkt.throttle = (value.max(0.0) * 100.0) as u8;
                         info!("throttle: {}", pkt.throttle);
                     }
-                    EventType::AxisChanged(Axis::LeftStickX, value, _) => {
+                    EventType::AxisChanged(Axis::RightStickX, value, _) => {
                         pkt.roll = value;
                         info!("roll: {}", value);
                     }
-                    EventType::AxisChanged(Axis::LeftStickY, value, _) => {
+                    EventType::AxisChanged(Axis::RightStickY, value, _) => {
                         pkt.pitch = value;
                         info!("pitch: {}", value);
                     }
-                    EventType::AxisChanged(Axis::RightStickX, val, _) => {
+                    EventType::AxisChanged(Axis::LeftStickX, val, _) => {
                         pkt.yaw = val;
                         info!("yaw: {}", val);
                     }

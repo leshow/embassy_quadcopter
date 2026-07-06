@@ -16,7 +16,7 @@ jobs:
           components: rustfmt
       # check all three workspaces
       - run: cargo fmt --all -- --check
-      - run: cargo fmt --all --manifest-path gamepad/Cargo.toml -- --check
+      - run: cargo fmt --all --manifest-path ground_control/Cargo.toml -- --check
       - run: cargo fmt --all --manifest-path visualizer/Cargo.toml -- --check
 
   check-firmware:
@@ -60,21 +60,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy -p embassy_quad --target ${{ matrix.target }} --no-default-features --features ${{ matrix.features }} -- -D warnings
 
-  check-gamepad:
-    name: Check gamepad
+  check-ground-control:
+    name: Check ground_control
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: gamepad
+          workspaces: ground_control
       # gilrs uses pkg-config to find libudev at build.rs time
       - run: sudo apt-get update && sudo apt-get install -y libudev-dev
-      - run: cargo check --manifest-path gamepad/Cargo.toml
+      - run: cargo check --manifest-path ground_control/Cargo.toml
 
-  clippy-gamepad:
-    name: Clippy gamepad
+  clippy-ground-control:
+    name: Clippy ground_control
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,9 +83,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: gamepad
+          workspaces: ground_control
       - run: sudo apt-get update && sudo apt-get install -y libudev-dev
-      - run: cargo clippy --manifest-path gamepad/Cargo.toml -- -D warnings
+      - run: cargo clippy --manifest-path ground_control/Cargo.toml -- -D warnings
 
   check-visualizer:
     name: Check visualizer

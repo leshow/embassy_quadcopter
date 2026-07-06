@@ -1,7 +1,7 @@
 [workspace]
 members = ["firmware", "libs"]
 # excluded because the yare x86 targets
-exclude = ["gamepad", "visualizer"]
+exclude = ["ground_control", "visualizer"]
 resolver = "2"
 
 [patch.crates-io]

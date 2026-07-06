@@ -194,7 +194,7 @@ pub async fn run_dmp(
         let pkt = match *wifi::CONTROLS.lock().await {
             Some((p, received_at)) if received_at.elapsed() < Duration::from_millis(500) => p,
             _ => {
-                motors.set_all_duty(0);
+                motors.turn_off();
                 continue;
             }
         };
@@ -213,7 +213,7 @@ pub async fn run_dmp(
         last_armed = armed;
 
         if !armed {
-            motors.set_all_duty(0);
+            motors.turn_off();
             continue;
         }
 
@@ -256,13 +256,13 @@ pub async fn run_dmp(
 
         // like controlTorque / motor mixing (flix)
         if t < 0.05 {
-            motors.set_all_duty(0);
+            motors.turn_off();
             continue;
         }
 
         // up-vector cross product gives roll/pitch error (flix rotationVectorBetween)
         // arg order matches flix: actual * target (swapped gives negated error vector)
-        let att_err = rotate_up(&quat).cross(&rotate_up(&target_quat)); // flix Vector::rotationVectorBetween — cross product of two up-vectors gives the attitude error
+        let att_err = rotate_up(&quat).cross(&rotate_up(&target_quat)); // flix Vector::rotationVectorBetween - cross product of two up-vectors gives the attitude error
         let roll_rate_sp = ANGLE_P_ROLL_PITCH * att_err.x;
         let pitch_rate_sp = ANGLE_P_ROLL_PITCH * att_err.y;
         let yaw_rate_sp = ANGLE_P_YAW * wrap_angle(target_yaw - actual_yaw) + yaw_ff;

@@ -380,11 +380,17 @@ impl<'a> Motors<'a> {
         self.rr.set_duty_hw(duty);
     }
 
+    pub fn turn_off(&self) {
+        self.fl.set_duty(0).expect("failed to set duty");
+        self.fr.set_duty(0).expect("failed to set duty");
+        self.rl.set_duty(0).expect("failed to set duty");
+        self.rr.set_duty(0).expect("failed to set duty");
+    }
+
     // set per-motor duties independently, returns the computed hw duty values for logging
     pub fn set_motors(&self, fl: f32, fr: f32, rl: f32, rr: f32) -> (u32, u32, u32, u32) {
-        // TODO: this THROTTLE_CAP is more a safety feature for my poor fingers during testing
         let duty = |v: f32| {
-            (v.clamp(0., 1.) * (crate::THROTTLE_CAP as f32 / 100.) * crate::PWM_MAX_DUTY as f32)
+            ((v.clamp(0., 1.) * crate::PWM_MAX_DUTY as f32) * (crate::THROTTLE_CAP as f32 / 100.))
                 as u32
         };
         let duties = (duty(fl), duty(fr), duty(rl), duty(rr));

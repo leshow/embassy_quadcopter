@@ -72,17 +72,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gamepad"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gilrs",
- "libs",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "gilrs"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -114,6 +103,17 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "windows",
+]
+
+[[package]]
+name = "ground_control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gilrs",
+ "libs",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

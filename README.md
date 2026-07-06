@@ -4,11 +4,19 @@ currently still a work in progress, building a (very) mini quadcopter for esp32 
 
 ## Quad assets
 
-![drone frame](/images/assembly.png)
+![drone frame](/images/drone_frame.png)
 
 The frame stl & 3mf files are in the `stl/` dir and can be used to 3d print the frame. I created them in OnShape. For the battery compartment, I opted for a friction fit with pegs that you can also glue in. This got around some issues with printing supports that were a pain to remove.
 
 There's a top stand that serves as a mount for the microcontroller and MPU6050 or ICM20948. I'll include a full parts list as the project progresses.
+
+I've also created a prop guard you can mount as a single piece or in two halves, see the 3mf file in `stl/`
+
+![prop guard](/images/drone_top.png)
+
+They have a C-snap fit to the motor holders that should lock them into place pretty well. I've printed with a 0.4 and 0.6 nozzle on a bambu a1 and both results are usable. Obviously if you want cleaner layer lines go for the smaller nozzle.
+
+I've printed in PLA, PETG and PETG-CF & GF. PLA seems totally fine, the drone frame is around 16 grams. The props are heavy at an additional 16 grams. They might require a bit of re-design but for indoor testing not so bad.
 
 ## Parts list
 
@@ -84,6 +92,10 @@ cargo run   --no-default-features --features c6 --target riscv32imac-unknown-non
 DEFMT_LOG=debug cargo flash-c3
 ```
 
+### Throttle cap
+
+`THROTTLE_CAP` sets the max throttle at compile time, it will map your throttle input from 0-100 over the range you specify. For example, if you set `THROTTLE_CAP=50` and push the throttle to 80% it will translate into `.8 * 50 = 40%`.
+
 ## Visualizer
 
 to see a 3d rendering of the orientation run:
@@ -100,9 +112,9 @@ By default, sensor readings from the ICM-20948 are sent to the ESP32-C3 where ei
 DEFMT_LOG="info" LOG_RATE_MS=1 cargo flash-c3 --features visualize | (cd visualizer && cargo run)
 ```
 
-## Gamepad control
+## Ground control
 
-The `gamepad/` crate is a PC-side sender that reads a gamepad and streams control packets to the drone over UDP.
+The `ground_control/` crate is a PC-side sender that reads a gamepad and streams control packets to the drone over UDP.
 
 The drone runs a wifi AP (`esp-quad`, WPA2) with a static IP of `192.168.4.1`. There is no DHCP server, so you must assign yourself a static IP when connecting. The trick is to do this in a single `nmcli con add` — adding security and static IP separately doesn't work reliably:
 
@@ -124,13 +136,13 @@ nmcli dev wifi rescan
 nmcli con up esp-quad
 ```
 
-Then run the gamepad sender:
+Then run the ground control sender:
 
 ```sh
-cd gamepad && cargo run
+cd ground_control && cargo run
 ```
 
-The right stick Y axis controls throttle (center = 0%, full up = 100%). The Start button toggles arm. Motors only spin when armed and throttle is above 0.
+The left stick Y axis controls throttle (center = 0%, full up = 100%), left stick X controls yaw, and the right stick controls pitch/roll. The Start button toggles arm. Motors only spin when armed and throttle is above 0.
 
 The drone IP and port can be overridden at build time:
 

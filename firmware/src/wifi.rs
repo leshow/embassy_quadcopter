@@ -18,7 +18,7 @@ use esp_radio::wifi::{
 use libs::control::{self, ControlPacket};
 use static_cell::StaticCell;
 
-// latest control input from the gamepad, stamped at receive time for failsafe
+// latest control input from ground control, stamped at receive time for failsafe
 pub static CONTROLS: Mutex<CriticalSectionRawMutex, Option<(ControlPacket, Instant)>> =
     Mutex::new(None);
 

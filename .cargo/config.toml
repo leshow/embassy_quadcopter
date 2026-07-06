@@ -15,7 +15,7 @@ build-c3 = "build -p embassy_quad --target riscv32imc-unknown-none-elf"
 flash-c3 = "run   -p embassy_quad --target riscv32imc-unknown-none-elf"
 build-c6 = "build -p embassy_quad --no-default-features --features c6 --target riscv32imac-unknown-none-elf"
 flash-c6 = "run   -p embassy_quad --no-default-features --features c6 --target riscv32imac-unknown-none-elf"
-gamepad   = "build --manifest-path gamepad/Cargo.toml --target x86_64-unknown-linux-gnu"
+ground_control = "build --manifest-path ground_control/Cargo.toml --target x86_64-unknown-linux-gnu"
 visualize = "build --manifest-path visualizer/Cargo.toml --target x86_64-unknown-linux-gnu"
 erase-flash = "!espflash erase-region 0x10000 0x300000"
 
