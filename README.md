@@ -139,7 +139,7 @@ nmcli con up esp-quad
 Then run the ground control sender:
 
 ```sh
-cd ground_control && cargo run
+cd ground_control && RUST_LOG="info" cargo run --release
 ```
 
 The left stick Y axis controls throttle (center = 0%, full up = 100%), left stick X controls yaw, and the right stick controls pitch/roll. The Start button toggles arm. Motors only spin when armed and throttle is above 0.
@@ -147,7 +147,7 @@ The left stick Y axis controls throttle (center = 0%, full up = 100%), left stic
 The drone IP and port can be overridden at build time:
 
 ```sh
-GATEWAY_IP=192.168.4.1 UDP_PORT=4444 cargo run
+RUST_LOG="info" GATEWAY_IP=192.168.4.1 UDP_PORT=4444 cargo run --release
 ```
 
 ## LLM usage
