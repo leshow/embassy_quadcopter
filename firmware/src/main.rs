@@ -138,8 +138,8 @@ async fn main(spawner: Spawner) {
             i2c,
             peripherals.LEDC,
             peripherals.GPIO1,  // rear left
-            peripherals.GPIO10, // rear right
-            peripherals.GPIO5,  // front left
+            peripherals.GPIO3,  // rear right
+            peripherals.GPIO10, // front left
             peripherals.GPIO9,  // front right
             int_pin,
         )

@@ -65,6 +65,7 @@ impl<'a> Motors<'a> {
 
         #[cfg(feature = "test_motors")]
         {
+            use embassy_time::Timer;
             let test_spin = 20;
             defmt::info!("testing front left");
             fl.start_duty_fade(0, test_spin, 2_000)

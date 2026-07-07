@@ -329,12 +329,19 @@ pub async fn run_dmp(
             rr -= excess;
         }
 
-        // keep all motors spinning — prevents one motor stalling due to large attitude error at low throttle
-        let motor_min = 0.05;
-        fl = fl.max(motor_min);
-        fr = fr.max(motor_min);
-        rl = rl.max(motor_min);
-        rr = rr.max(motor_min);
+        // disabled: flix doesn't floor individual motors during in-flight mixing either - it
+        // only forces a flat idle when thrustTarget < 0.1 (handled above via the t < 0.05 cutoff)
+        // and otherwise relies on the final per-motor clamp in Motors::set_motors. leaving this
+        // here commented out in case we want it back for a different reason later.
+        // let motor_min = 0.05;
+        // let min = fl.min(fr).min(rl).min(rr);
+        // if min < motor_min {
+        //     let deficit = motor_min - min;
+        //     fl += deficit;
+        //     fr += deficit;
+        //     rl += deficit;
+        //     rr += deficit;
+        // }
 
         let (dfl, dfr, drl, drr) = motors.set_motors(fl, fr, rl, rr);
         defmt::trace!(
