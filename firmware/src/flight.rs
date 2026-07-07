@@ -1,8 +1,39 @@
 use embassy_time::{Duration, Instant};
 use esp_hal::gpio;
+#[cfg(feature = "telemetry")]
+use icm20948::dmp::EulerAngles;
+#[cfg(feature = "telemetry")]
+use libs::control::TelemetryPacket;
 use nalgebra::Vector3;
 
 use crate::{Motors, Sensor20948, fusion, wifi};
+
+// publishes a telemetry snapshot for the wifi udp_task to reply with on the next control packet.
+// called once per loop iteration, from whichever exit point (early continue or full mix) is
+// actually taken, so telemetry is only ever built once per tick.
+#[cfg(feature = "telemetry")]
+#[allow(clippy::too_many_arguments)]
+async fn publish_telemetry(
+    euler: EulerAngles,
+    motors: (u16, u16, u16, u16), // fl fr rl rr
+    armed: bool,
+    failsafe: bool,
+    gyro: Vector3<f32>,
+) {
+    let roll_deg = euler.roll * fusion::RAD_TO_DEG;
+    let pitch_deg = euler.pitch * fusion::RAD_TO_DEG;
+    let yaw_deg = euler.yaw * fusion::RAD_TO_DEG;
+
+    #[cfg(not(feature = "telemetry-verbose"))]
+    let _ = &gyro;
+
+    #[cfg(not(feature = "telemetry-verbose"))]
+    let pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe);
+    #[cfg(feature = "telemetry-verbose")]
+    let pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe, gyro);
+
+    *wifi::TELEMETRY.lock().await = Some((pkt, Instant::now()));
+}
 
 // calibrated_gyro is i16 at ±2000 dps full scale, hardware DLPF at 51 Hz already applied
 const GYRO_SCALE: f32 = 2000.0 * fusion::DEG_TO_RAD / 32768.0; // i16 → rad/s
@@ -190,16 +221,23 @@ pub async fn run_dmp(
             .unwrap_or(0.0);
         last_instant = Some(now);
 
-        // snapshot controls — failsafe: zero motors if no packet or packet is stale (>500 ms)
-        let pkt = match *wifi::CONTROLS.lock().await {
-            Some((p, received_at)) if received_at.elapsed() < Duration::from_millis(500) => p,
+        let euler = quat.to_euler_angles();
+
+        // snapshot controls once — used for both the failsafe check below and telemetry
+        let controls = *wifi::CONTROLS.lock().await;
+        let fresh = controls.is_some_and(|(_, at)| at.elapsed() < Duration::from_millis(500));
+        let armed = fresh && controls.is_some_and(|(p, _)| p.armed());
+
+        // failsafe: zero motors if no packet or packet is stale (>500 ms)
+        let pkt = match controls {
+            Some((p, _)) if fresh => p,
             _ => {
                 motors.turn_off();
+                #[cfg(feature = "telemetry")]
+                publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
                 continue;
             }
         };
-
-        let armed = pkt.armed();
 
         if !last_armed && armed {
             defmt::info!("ARMED");
@@ -214,13 +252,14 @@ pub async fn run_dmp(
 
         if !armed {
             motors.turn_off();
+            #[cfg(feature = "telemetry")]
+            publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
             continue;
         }
 
         // would be controlAttitude (flix)
         // DMP gives us the fused quaternion directly instead of running Mahony/Madgwick
 
-        let euler = quat.to_euler_angles();
         let actual_yaw = euler.yaw;
         let t = pkt.throttle as f32 / 100.0;
 
@@ -257,6 +296,8 @@ pub async fn run_dmp(
         // like controlTorque / motor mixing (flix)
         if t < 0.05 {
             motors.turn_off();
+            #[cfg(feature = "telemetry")]
+            publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
             continue;
         }
 
@@ -310,6 +351,16 @@ pub async fn run_dmp(
             drl,
             drr,
         );
+
+        #[cfg(feature = "telemetry")]
+        publish_telemetry(
+            euler,
+            (dfl as u16, dfr as u16, drl as u16, drr as u16),
+            armed,
+            false,
+            g,
+        )
+        .await;
     }
 }
 

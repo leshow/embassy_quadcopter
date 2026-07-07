@@ -1,7 +1,11 @@
+#[cfg(feature = "telemetry")]
+use std::io::ErrorKind;
 use std::{net::UdpSocket, thread, time::Duration};
 
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use libs::control::ControlPacket;
+#[cfg(feature = "telemetry")]
+use libs::control::{TELEMETRY_SIZE, TelemetryPacket};
 use tracing::info;
 
 fn main() -> anyhow::Result<()> {
@@ -21,6 +25,9 @@ fn main() -> anyhow::Result<()> {
         }) {
             Ok(s) => {
                 info!("connected to {}:{}", ip, port);
+                // short timeout so a missing telemetry reply doesn't stall the input loop
+                #[cfg(feature = "telemetry")]
+                s.set_read_timeout(Some(Duration::from_millis(20))).ok();
                 s
             }
             Err(e) => {
@@ -73,6 +80,41 @@ fn main() -> anyhow::Result<()> {
             if let Err(e) = socket.send(&pkt.to_bytes()) {
                 info!("send error: {e}");
                 break 'inner;
+            }
+
+            #[cfg(feature = "telemetry")]
+            {
+                let mut tbuf = [0u8; TELEMETRY_SIZE];
+                match socket.recv(&mut tbuf) {
+                    Ok(n) if n == TELEMETRY_SIZE => {
+                        if let Some(t) = TelemetryPacket::from_bytes(&tbuf) {
+                            #[cfg(not(feature = "telemetry-verbose"))]
+                            info!(
+                                "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} motors={:?}",
+                                t.roll,
+                                t.pitch,
+                                t.yaw,
+                                t.armed(),
+                                t.failsafe(),
+                                t.motors
+                            );
+                            #[cfg(feature = "telemetry-verbose")]
+                            info!(
+                                "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} motors={:?} gyro={:?}",
+                                t.roll,
+                                t.pitch,
+                                t.yaw,
+                                t.armed(),
+                                t.failsafe(),
+                                t.motors,
+                                t.gyro
+                            );
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                    Err(e) => info!("telemetry recv error: {e}"),
+                }
             }
         }
     }

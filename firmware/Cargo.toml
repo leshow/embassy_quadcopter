@@ -33,15 +33,17 @@ libm = "0.2.16"
 nalgebra = { version = "0.35", default-features = false, features = [
 	"libm-force",
 ] }
-libs = { path = "../libs" }
+libs = { path = "../libs", default-features = false }
 
 [features]
-default = ["c3", "dmp"]
+default = ["c3", "dmp", "telemetry"]
 calibrate = [
 ] # you will also have to manually edit the .cargo/config.toml to remove --monitor
 test_motors = []
 dmp = []
 visualize = []
+telemetry = ["libs/telemetry"]
+telemetry-verbose = ["telemetry", "libs/telemetry-verbose"]
 c3 = [
 	"esp-hal/esp32c3",
 	"esp-rtos/esp32c3",

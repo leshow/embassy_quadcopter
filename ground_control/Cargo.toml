@@ -4,8 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-libs = { path = "../libs" }
+libs = { path = "../libs", default-features = false }
 gilrs = "0.11.2"
 anyhow = "1.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = ["telemetry"]
+telemetry = ["libs/telemetry"]
+telemetry-verbose = ["telemetry", "libs/telemetry-verbose"]

@@ -15,11 +15,19 @@ use esp_radio::wifi::{
     AccessPointStationEventInfo, AuthenticationMethod, Config, ControllerConfig, Interface,
     WifiController, ap::AccessPointConfig,
 };
+#[cfg(feature = "telemetry")]
+use libs::control::TelemetryPacket;
 use libs::control::{self, ControlPacket};
 use static_cell::StaticCell;
 
 // latest control input from ground control, stamped at receive time for failsafe
 pub static CONTROLS: Mutex<CriticalSectionRawMutex, Option<(ControlPacket, Instant)>> =
+    Mutex::new(None);
+
+// latest telemetry snapshot from the flight loop, sent back to ground control on each
+// received control packet. None until the flight loop has produced a first sample.
+#[cfg(feature = "telemetry")]
+pub static TELEMETRY: Mutex<CriticalSectionRawMutex, Option<(TelemetryPacket, Instant)>> =
     Mutex::new(None);
 
 macro_rules! mk_static {
@@ -129,11 +137,22 @@ async fn udp_task(stack: Stack<'static>) {
     let mut buf = [0u8; control::DEFAULT_SIZE]; // sized to exact packet; rejects anything else
     loop {
         match socket.recv_from(&mut buf).await {
-            Ok((n, _)) if n == control::DEFAULT_SIZE => {
+            Ok((n, meta)) if n == control::DEFAULT_SIZE => {
                 if let Some(packet) = ControlPacket::from_bytes(&buf) {
                     // defmt::trace!("packet received {:?}", defmt::Debug2Format(&packet));
                     *CONTROLS.lock().await = Some((packet, Instant::now()));
                 }
+                #[cfg(feature = "telemetry")]
+                if let Some((pkt, _ts)) = *TELEMETRY.lock().await
+                    && let Err(err) = socket.send_to(&pkt.to_bytes(), meta.endpoint).await
+                {
+                    defmt::warn!(
+                        "failed to sent telemetry packet: {:?}",
+                        defmt::Debug2Format(&err)
+                    );
+                }
+                #[cfg(not(feature = "telemetry"))]
+                let _ = meta;
             }
             Ok((n, _)) => defmt::warn!("unexpected UDP packet size: {}", n),
             Err(_) => {}

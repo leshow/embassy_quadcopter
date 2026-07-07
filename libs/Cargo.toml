@@ -4,3 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+nalgebra = { version = "0.35", default-features = false, features = [
+	"libm-force",
+], optional = true }
+
+[features]
+# no default here - firmware/ground_control forward their own default selection via
+# `libs/telemetry` on their dependency declaration, so libs itself stays opinion-free
+telemetry = []
+telemetry-verbose = ["telemetry", "dep:nalgebra"]
