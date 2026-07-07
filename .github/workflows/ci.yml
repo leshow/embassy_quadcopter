@@ -19,6 +19,24 @@ jobs:
       - run: cargo fmt --all --manifest-path ground_control/Cargo.toml -- --check
       - run: cargo fmt --all --manifest-path visualizer/Cargo.toml -- --check
 
+  test-libs:
+    name: Test libs (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: no features
+            args: ""
+          - name: telemetry
+            args: --features telemetry
+          - name: telemetry-verbose
+            args: --features telemetry-verbose
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p libs ${{ matrix.args }}
+
   check-firmware:
     name: Check firmware (${{ matrix.chip }})
     runs-on: ubuntu-latest

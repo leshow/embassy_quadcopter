@@ -150,6 +150,18 @@ The drone IP and port can be overridden at build time:
 RUST_LOG="info" GATEWAY_IP=192.168.4.1 UDP_PORT=4444 cargo run --release
 ```
 
+## Testing
+
+Unit tests live in `libs`, the crate shared between `firmware` and `ground_control` that defines the control/telemetry packet wire formats. It's the only crate that can build for the host, `firmware` can't (esp-hal's build script refuses to build for a non-embedded target), so there's nothing to run tests against there yet.
+
+`telemetry` and `telemetry-verbose` each change the telemetry packet's wire format, so they're tested separately:
+
+```sh
+cargo test -p libs
+cargo test -p libs --features telemetry
+cargo test -p libs --features telemetry-verbose
+```
+
 ## LLM usage
 
 Docs and tests are sometimes generated with the use of LLMs, along with explanation/discovery, but the purpose of this project is to actually learn, so the code is still written by a human (hi!)
