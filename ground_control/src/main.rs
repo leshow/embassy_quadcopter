@@ -6,7 +6,7 @@ use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use libs::control::ControlPacket;
 #[cfg(feature = "telemetry")]
 use libs::control::{TELEMETRY_SIZE, TelemetryPacket};
-use tracing::info;
+use tracing::{info, warn};
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -89,26 +89,34 @@ fn main() -> anyhow::Result<()> {
                     Ok(n) if n == TELEMETRY_SIZE => {
                         if let Some(t) = TelemetryPacket::from_bytes(&tbuf) {
                             #[cfg(not(feature = "telemetry-verbose"))]
-                            info!(
-                                "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} motors={:?}",
+                            let msg = format!(
+                                "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} motors={:?}",
                                 t.roll,
                                 t.pitch,
                                 t.yaw,
                                 t.armed(),
                                 t.failsafe(),
+                                t.fifo_overflow(),
                                 t.motors
                             );
                             #[cfg(feature = "telemetry-verbose")]
-                            info!(
-                                "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} motors={:?} gyro={:?}",
+                            let msg = format!(
+                                "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} motors={:?} gyro={:?}",
                                 t.roll,
                                 t.pitch,
                                 t.yaw,
                                 t.armed(),
                                 t.failsafe(),
+                                t.fifo_overflow(),
                                 t.motors,
                                 t.gyro
                             );
+
+                            if t.fifo_overflow() {
+                                warn!("{msg}");
+                            } else {
+                                info!("{msg}");
+                            }
                         }
                     }
                     Ok(_) => {}

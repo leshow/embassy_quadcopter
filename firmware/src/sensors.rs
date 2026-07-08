@@ -49,10 +49,7 @@ impl<I: I2c> ImuRead for Sensor<Mpu6050<I>> {
 // ICM20948 (9DOF, with mag) ---
 
 impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
-    pub async fn init_icm20948(
-        i2c: I,
-        loop_period_ms: u64,
-    ) -> Result<Self, icm20948::Error<I::Error>> {
+    pub async fn init_icm20948(i2c: I) -> Result<Self, icm20948::Error<I::Error>> {
         let interface = I2cInterface::alternative(i2c);
         let mut driver = Icm20948Driver::new(interface);
         driver.verify_who_am_i().await?;
@@ -84,34 +81,51 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
         }
         #[cfg(not(feature = "dmp"))]
         {
-            // ODR = base / (1 + div); dividers keep sensor rate just above the loop rate
-            let accel_div = (1125 * loop_period_ms / 1000).saturating_sub(1) as u16;
-            let gyro_div = (1100 * loop_period_ms / 1000).saturating_sub(1) as u8;
+            // divider=1 -> gyro ~550Hz (1100/2), accel ~562Hz (1125/2)
             driver
                 .configure_accelerometer(AccelConfig {
                     full_scale: AccelFullScale::G4,
                     dlpf: AccelDlpf::Hz111,
                     dlpf_enable: true,
-                    sample_rate_div: accel_div,
+                    sample_rate_div: 1,
                 })
                 .await?;
-            // ±500°/s gives finer resolution than 2000dps for stable hover
+            // 500deg/s gives finer resolution than 2000dps for stable hover corrections;
+            // Hz51 DLPF matches the DMP path's filtering so the rate PID's D-term
+            // behaves the same regardless of which sensor source feeds it
             driver
                 .configure_gyroscope(GyroConfig {
                     full_scale: GyroFullScale::Dps500,
-                    dlpf: GyroDlpf::Hz197,
+                    dlpf: GyroDlpf::Hz51,
                     dlpf_enable: true,
-                    sample_rate_div: gyro_div,
+                    sample_rate_div: 1,
+                })
+                .await?;
+
+            // raw data-ready interrupt on the same INT pin the DMP path uses, so the
+            // flight loop can stay interrupt-driven instead of a fixed timer
+            driver
+                .configure_interrupt_pin(&InterruptPinConfig {
+                    active_low: false,
+                    open_drain: false,
+                    latch_enabled: true,
+                    clear_on_any_read: true,
+                })
+                .await?;
+            driver
+                .configure_interrupts(&InterruptConfig {
+                    raw_data_ready: true,
+                    ..Default::default()
                 })
                 .await?;
         }
 
-        driver
-            .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)
-            .await
-            .inspect_err(|e| {
-                defmt::error!("error during init_icm20948 {}", defmt::Debug2Format(e));
-            })?;
+        // driver
+        //     .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)
+        //     .await
+        //     .inspect_err(|e| {
+        //         defmt::error!("error during init_icm20948 {}", defmt::Debug2Format(e));
+        //     })?;
 
         #[cfg(feature = "dmp")]
         {
@@ -119,7 +133,8 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             use embassy_time::Delay;
             use icm20948::dmp::DmpConfig;
 
-            let dmp_hz = 150;
+            // set DMP hz cycle here
+            let dmp_hz = 100;
             let mut int_cfg = InterruptConfig::data_ready_only();
             int_cfg.dmp = true;
             driver.configure_interrupts(&int_cfg).await.unwrap();
@@ -157,9 +172,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             defmt::info!("ICM20948 DMP enabled {}Hz", dmp_hz);
         }
 
-        #[cfg(not(feature = "dmp"))]
-        defmt::info!("ICM20948 init OK (mag enabled)");
-
+        defmt::info!("ICM20948 init OK");
         Ok(Self { driver })
     }
 

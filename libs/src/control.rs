@@ -54,6 +54,17 @@ impl Flags {
             self.0 &= !0x02;
         }
     }
+
+    pub fn fifo_overflow(&self) -> bool {
+        0x04 & self.0 != 0
+    }
+    pub fn set_fifo_overflow(&mut self, b: bool) {
+        if b {
+            self.0 |= 0x04;
+        } else {
+            self.0 &= !0x04;
+        }
+    }
 }
 
 impl ControlPacket {
@@ -167,6 +178,7 @@ impl TelemetryPacket {
     }
 
     #[cfg(feature = "telemetry-verbose")]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         roll: f32,
         pitch: f32,
@@ -187,6 +199,12 @@ impl TelemetryPacket {
             gyro,
             flags,
         }
+    }
+
+    /// marks the packet as having been produced right after a DMP FIFO overflow -
+    /// set directly on the cached telemetry packet, doesn't require rebuilding one
+    pub fn set_fifo_overflow(&mut self, b: bool) {
+        self.flags.set_fifo_overflow(b);
     }
 
     pub fn to_bytes(&self) -> [u8; TELEMETRY_SIZE] {
@@ -242,6 +260,10 @@ impl TelemetryPacket {
 
     pub fn failsafe(&self) -> bool {
         self.flags.failsafe()
+    }
+
+    pub fn fifo_overflow(&self) -> bool {
+        self.flags.fifo_overflow()
     }
 }
 
@@ -418,5 +440,33 @@ mod tests {
 
         assert!(pkt.armed());
         assert!(pkt.failsafe());
+        assert!(!pkt.fifo_overflow());
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn test_telemetry_packet_set_fifo_overflow() {
+        #[cfg(not(feature = "telemetry-verbose"))]
+        let mut pkt = TelemetryPacket::new(0.0, 0.0, 0.0, (0, 0, 0, 0), true, false);
+        #[cfg(feature = "telemetry-verbose")]
+        let mut pkt = TelemetryPacket::new(
+            0.0,
+            0.0,
+            0.0,
+            (0, 0, 0, 0),
+            true,
+            false,
+            Vector3::new(0.0, 0.0, 0.0),
+        );
+
+        assert!(!pkt.fifo_overflow());
+        pkt.set_fifo_overflow(true);
+        assert!(pkt.fifo_overflow());
+        // doesn't disturb the other flags
+        assert!(pkt.armed());
+        assert!(!pkt.failsafe());
+
+        let bytes = pkt.to_bytes();
+        assert_eq!(TelemetryPacket::from_bytes(&bytes), Some(pkt));
     }
 }

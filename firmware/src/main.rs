@@ -25,18 +25,12 @@ use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-#[cfg(feature = "dmp")]
 mod flight;
 mod fusion;
 mod motors;
 mod sensors;
 mod wifi;
 
-#[cfg(not(feature = "dmp"))]
-use crate::{
-    fusion::FusionBuilder,
-    sensors::{ImuRead, ImuReadMag},
-};
 use crate::{motors::Motors, sensors::Sensor, wifi::AP};
 
 const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
@@ -149,7 +143,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "calibrate")]
     {
         // ICM20948
-        let mut sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
+        let mut sensor = Sensor::init_icm20948(i2c)
             .await
             .expect("ICM20948 init failed");
         sensor.run_calibration().await;
@@ -196,7 +190,7 @@ async fn run(
     )
     .await;
     // ICM20948
-    let sensor = match Sensor::init_icm20948(i2c, LOOP_PERIOD_MS).await {
+    let sensor = match Sensor::init_icm20948(i2c).await {
         Ok(s) => s,
         Err(e) => {
             defmt::error!("ICM20948 init failed: {}", defmt::Debug2Format(&e));
@@ -204,85 +198,20 @@ async fn run(
         }
     };
 
-    #[cfg(not(feature = "dmp"))]
-    {
-        let _ = int_pin;
-        software_loop(sensor).await;
-    }
-    #[cfg(feature = "dmp")]
-    flight::run_dmp(sensor, int_pin, motors).await;
+    flight::run_control(sensor, int_pin, motors).await;
 }
 
 pub(crate) type Sensor20948<'a> =
     Sensor<icm20948::Icm20948Driver<icm20948::I2cInterface<I2c<'a, Async>>>>;
 
-#[cfg(not(feature = "dmp"))]
-async fn software_loop(mut sensor: Sensor20948<'_>) {
-    let mut fusion = FusionBuilder::new()
-        .icm20948()
-        // .vqf()
-        // .mahony()
-        .madgwick()
-        .build();
-    // let mut fusion = FusionBuilder::new().mpu6050().complementary().build();
-    let mut last = embassy_time::Instant::now();
-    let mut log_counter: u32 = 0;
-
-    loop {
-        let now = embassy_time::Instant::now();
-        let dt = now.duration_since(last).as_micros() as f32 / 1_000_000.0;
-        last = now;
-
-        match sensor.read().await {
-            Ok((a, g)) => {
-                let quat = fusion.update_imu(dt, a, g);
-                let (roll_rad, pitch_rad, yaw_rad) = quat.euler_angles();
-                let roll_deg = roll_rad * fusion::RAD_TO_DEG;
-                let pitch_deg = pitch_rad * fusion::RAD_TO_DEG;
-                let yaw_deg = yaw_rad * fusion::RAD_TO_DEG;
-
-                // set_lights(
-                //     roll_deg,
-                //     pitch_deg,
-                //     &mut led_fwd_roll,
-                //     &mut led_bwd_roll,
-                //     &mut led_fwd_pitch,
-                //     &mut led_bwd_pitch,
-                // );
-
-                log_counter += 1;
-                if log_counter >= LOG_EVERY_N {
-                    log_counter = 0;
-                    defmt::debug!(
-                        "qx: {} qy: {} qz: {} qw: {} \n roll: {}°  pitch: {}°  yaw: {}°",
-                        roll_rad,
-                        pitch_rad,
-                        yaw_rad,
-                        quat.w,
-                        roll_deg,
-                        pitch_deg,
-                        yaw_deg
-                    );
-                }
-            }
-            Err(e) => defmt::error!("imu error: {}", defmt::Debug2Format(&e)),
-        }
-
-        Timer::after_millis(LOOP_PERIOD_MS).await;
-    }
-}
-
 #[cfg(feature = "visualize")]
 async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>, int_pin: gpio::Input<'static>) {
-    let sensor = Sensor::init_icm20948(i2c, LOOP_PERIOD_MS)
+    let sensor = Sensor::init_icm20948(i2c)
         .await
         .expect("ICM20948 init failed");
 
-    #[cfg(not(feature = "dmp"))]
-    {
-        let _ = int_pin;
-        software_loop(sensor).await;
-    }
     #[cfg(feature = "dmp")]
     flight::run_dmp_visualizer(sensor, int_pin).await;
+    #[cfg(not(feature = "dmp"))]
+    flight::run_fusion_visualizer(sensor, int_pin).await;
 }
