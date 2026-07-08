@@ -77,12 +77,7 @@ cargo build-c6
 cargo flash-c6
 ```
 
-These aliases expand to:
-
-```sh
-cargo build --no-default-features --features c6 --target riscv32imac-unknown-none-elf
-cargo run   --no-default-features --features c6 --target riscv32imac-unknown-none-elf
-```
+See .cargo/config.toml to see expansion of aliases
 
 ### Log level
 
