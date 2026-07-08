@@ -4,8 +4,12 @@ use esp_hal::gpio;
 use icm20948::dmp::EulerAngles;
 #[cfg(feature = "telemetry")]
 use libs::control::TelemetryPacket;
+#[cfg(not(feature = "dmp"))]
+use nalgebra::UnitQuaternion;
 use nalgebra::Vector3;
 
+#[cfg(not(feature = "dmp"))]
+use crate::sensors::ImuRead;
 use crate::{Motors, Sensor20948, fusion, wifi};
 
 // publishes a telemetry snapshot for the wifi udp_task to reply with on the next control packet.
@@ -36,6 +40,7 @@ async fn publish_telemetry(
 }
 
 // calibrated_gyro is i16 at +/-2000 dps full scale, hardware DLPF at 51 Hz already applied
+#[cfg(feature = "dmp")]
 const GYRO_SCALE: f32 = 2000.0 * fusion::DEG_TO_RAD / 32768.0; // i16 → rad/s
 
 // max roll/pitch command from stick (+/- 25 deg)
@@ -54,6 +59,7 @@ const RATE_KI_YAW: f32 = 0.0;
 const RATE_KD_YAW: f32 = 0.0;
 
 // max angle any single DMP sample can plausibly rotate by since the last accepted sample
+#[cfg(feature = "dmp")]
 const MAX_QUAT_JUMP_RAD: f32 = 60.0 * fusion::DEG_TO_RAD;
 
 /// PID
@@ -157,6 +163,7 @@ fn quat_from_euler(roll: f32, pitch: f32, yaw: f32) -> icm20948::dmp::Quaternion
 
 // reads one DMP FIFO frame, returns (quaternion, gyro_rad_s) or None if no usable data
 // DMP software fusion. calibrated_gyro replaces raw gyro register reads
+#[cfg(feature = "dmp")]
 async fn read_dmp(
     sensor: &mut Sensor20948<'_>,
     log_counter: &mut u32,
@@ -242,14 +249,95 @@ async fn read_dmp(
     }
 }
 
+// generalizes "fuse one accel+gyro sample into an orientation" across whichever filter
+// FusionBuilder was configured with. Madgwick/Vqf/Mahony all expose a matching IMU-only
+// update_imu for the ICM20948; Complementary isn't included since its only ICM20948 impl
+// requires a magnetometer reading, which read_fusion below doesn't take.
+#[cfg(not(feature = "dmp"))]
+trait ImuFusion {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32>;
+}
+
+#[cfg(not(feature = "dmp"))]
+impl ImuFusion for fusion::Fusion<fusion::ICM20948, fusion::Madgwick> {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+        Self::update_imu(self, dt, a, g)
+    }
+}
+
+#[cfg(not(feature = "dmp"))]
+impl ImuFusion for fusion::Fusion<fusion::ICM20948, fusion::Vqf> {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+        Self::update_imu(self, dt, a, g)
+    }
+}
+
+#[cfg(not(feature = "dmp"))]
+impl ImuFusion for fusion::Fusion<fusion::ICM20948, fusion::Mahony> {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+        Self::update_imu(self, dt, a, g)
+    }
+}
+
+// reads raw accel/gyro and fuses them into an orientation quaternion via whichever filter
+// implements ImuFusion. same (Quaternion, gyro_rad_s) shape as read_dmp, so the rest of the
+// control loop is unchanged regardless of which sensor-read path or filter is active
+#[cfg(not(feature = "dmp"))]
+async fn read_fusion<F: ImuFusion>(
+    sensor: &mut Sensor20948<'_>,
+    filter: &mut F,
+    dt: f32,
+    log_counter: &mut u32,
+) -> Option<(icm20948::dmp::Quaternion, Vector3<f32>)> {
+    match sensor.read().await {
+        Ok((accel, gyro)) => {
+            let uq = filter.update_imu(dt, accel, gyro);
+            let quat = icm20948::dmp::Quaternion::new(uq.w, uq.i, uq.j, uq.k);
+
+            *log_counter += 1;
+            if *log_counter >= crate::LOG_EVERY_N {
+                *log_counter = 0;
+                let e = quat.to_euler_angles();
+                defmt::debug!(
+                    "fusion w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
+                    quat.w,
+                    quat.x,
+                    quat.y,
+                    quat.z,
+                    e.roll * fusion::RAD_TO_DEG,
+                    e.pitch * fusion::RAD_TO_DEG,
+                    e.yaw * fusion::RAD_TO_DEG,
+                );
+            }
+            Some((quat, gyro))
+        }
+        Err(e) => {
+            defmt::error!("IMU read error: {}", defmt::Debug2Format(&e));
+            None
+        }
+    }
+}
+
+fn dur_since(last_instant: &mut Option<Instant>) -> f32 {
+    let now = Instant::now();
+    let dt = last_instant
+        .map(|t| now.duration_since(t).as_micros() as f32 / 1_000_000.0)
+        .unwrap_or(0.0);
+    *last_instant = Some(now);
+
+    dt
+}
 // control loop
-pub async fn run_dmp(
+pub async fn run_control(
     mut sensor: Sensor20948<'_>,
     mut int_pin: gpio::Input<'static>,
     motors: Motors<'_>,
 ) {
     let mut log_counter: u32 = 0;
+    #[cfg(feature = "dmp")]
     let mut last_quat: Option<icm20948::dmp::Quaternion> = None;
+    #[cfg(not(feature = "dmp"))]
+    let mut fusion_filter = fusion::FusionBuilder::new().icm20948().madgwick().build();
 
     // inner rate PIDs
     let mut roll_pid = Pid::new(
@@ -295,16 +383,26 @@ pub async fn run_dmp(
             motors.turn_off();
         }
 
-        let (quat, g) = match read_dmp(&mut sensor, &mut log_counter, &mut last_quat).await {
-            Some(d) => d,
-            None => continue,
+        #[cfg(feature = "dmp")]
+        let (quat, g, dt) = {
+            let (quat, g) = match read_dmp(&mut sensor, &mut log_counter, &mut last_quat).await {
+                Some(d) => d,
+                None => continue,
+            };
+            let dt = dur_since(&mut last_instant);
+            (quat, g, dt)
         };
 
-        let now = Instant::now();
-        let dt = last_instant
-            .map(|t| now.duration_since(t).as_micros() as f32 / 1_000_000.0)
-            .unwrap_or(0.0);
-        last_instant = Some(now);
+        #[cfg(not(feature = "dmp"))]
+        let (quat, g, dt) = {
+            let dt = dur_since(&mut last_instant);
+            let (quat, g) =
+                match read_fusion(&mut sensor, &mut fusion_filter, dt, &mut log_counter).await {
+                    Some(d) => d,
+                    None => continue,
+                };
+            (quat, g, dt)
+        };
 
         let euler = quat.to_euler_angles();
 
@@ -433,12 +531,25 @@ pub async fn run_dmp(
 }
 
 // visualize-only loop: log orientation, no motor control, no WiFi
-#[cfg(feature = "visualize")]
+#[cfg(all(feature = "visualize", feature = "dmp"))]
 pub async fn run_dmp_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>) {
     let mut log_counter: u32 = 0;
     let mut last_quat: Option<icm20948::dmp::Quaternion> = None;
     loop {
         int_pin.wait_for_high().await;
         read_dmp(&mut sensor, &mut log_counter, &mut last_quat).await;
+    }
+}
+
+// visualize-only loop for the fusion path: log orientation, no motor control, no WiFi
+#[cfg(all(feature = "visualize", not(feature = "dmp")))]
+pub async fn run_fusion_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>) {
+    let mut log_counter: u32 = 0;
+    let mut fusion_filter = fusion::FusionBuilder::new().icm20948().madgwick().build();
+    let mut last_instant: Option<Instant> = None;
+    loop {
+        int_pin.wait_for_high().await;
+        let dt = dur_since(&mut last_instant);
+        read_fusion(&mut sensor, &mut fusion_filter, dt, &mut log_counter).await;
     }
 }
