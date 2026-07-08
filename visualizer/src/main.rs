@@ -19,9 +19,9 @@ impl FromStr for Attitude {
     type Err = anyhow::Error;
 
     fn from_str(line: &str) -> Result<Self, Self::Err> {
-        let (roll, rest) = extract_val(line, "roll: ").context("failed to parse roll")?;
-        let (pitch, rest) = extract_val(rest, "pitch: ").context("failed to parse pitch")?;
-        let (yaw, _) = extract_val(rest, "yaw: ").context("failed to parse yaw")?;
+        let (roll, rest) = extract_val(line, "roll").context("failed to parse roll")?;
+        let (pitch, rest) = extract_val(rest, "pitch").context("failed to parse pitch")?;
+        let (yaw, _) = extract_val(rest, "yaw").context("failed to parse yaw")?;
         Ok(Attitude { roll, pitch, yaw })
     }
 }
@@ -30,7 +30,10 @@ impl FromStr for Attitude {
 /// Stops at the first character that is not a digit, dot, or minus sign,
 /// so we handle degree symbol '°' (0xC2 0xB0).
 fn extract_val<'a>(line: &'a str, key: &str) -> Option<(f32, &'a str)> {
-    let (_, rest) = line.trim().split_once(key)?;
+    let (_, mut rest) = line.trim().split_once(key)?;
+    if rest.as_bytes().first().copied()? == b'=' || rest.as_bytes().first().copied()? == b':' {
+        rest = rest[1..].trim();
+    }
     let end = rest
         .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
         .unwrap_or(rest.len());
@@ -165,11 +168,11 @@ mod tests {
     #[test]
     fn test_extract() {
         let str = "roll: -1.9°  pitch: -2.9°  yaw: -41.3°";
-        let (val, rest) = extract_val(str, "roll: ").unwrap();
+        let (val, rest) = extract_val(str, "roll").unwrap();
         assert_eq!(val, -1.9f32);
-        let (val, rest) = extract_val(rest, "pitch: ").unwrap();
+        let (val, rest) = extract_val(rest, "pitch").unwrap();
         assert_eq!(val, -2.9f32);
-        let (val, _) = extract_val(rest, "yaw: ").unwrap();
+        let (val, _) = extract_val(rest, "yaw").unwrap();
         assert_eq!(val, -41.3f32);
     }
 
@@ -180,5 +183,16 @@ mod tests {
         assert_eq!(a.roll, -1.9f32);
         assert_eq!(a.pitch, -2.9f32);
         assert_eq!(a.yaw, -41.3f32);
+    }
+
+    #[test]
+    fn test_extract_telemetry() {
+        let s = "2026-07-07T22:58:18.058395Z  INFO ground_control: telemetry: roll=-0.9 pitch=1.2 yaw=-41.3 armed=false failsafe=false motors=(0, 0, 0, 0)";
+        let (val, rest) = extract_val(s, "roll").unwrap();
+        assert_eq!(val, -0.9f32);
+        let (val, rest) = extract_val(rest, "pitch").unwrap();
+        assert_eq!(val, 1.2f32);
+        let (val, _) = extract_val(rest, "yaw").unwrap();
+        assert_eq!(val, -41.3f32);
     }
 }

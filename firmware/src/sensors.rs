@@ -99,7 +99,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             driver
                 .configure_gyroscope(GyroConfig {
                     full_scale: GyroFullScale::Dps500,
-                    dlpf: GyroDlpf::Hz197,
+                    dlpf: GyroDlpf::Hz51,
                     dlpf_enable: true,
                     sample_rate_div: gyro_div,
                 })
@@ -119,7 +119,8 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             use embassy_time::Delay;
             use icm20948::dmp::DmpConfig;
 
-            let dmp_hz = 150;
+            // set DMP hz cycle here
+            let dmp_hz = 100;
             let mut int_cfg = InterruptConfig::data_ready_only();
             int_cfg.dmp = true;
             driver.configure_interrupts(&int_cfg).await.unwrap();

@@ -35,15 +35,26 @@ async fn publish_telemetry(
     *wifi::TELEMETRY.lock().await = Some((pkt, Instant::now()));
 }
 
-// calibrated_gyro is i16 at ±2000 dps full scale, hardware DLPF at 51 Hz already applied
+// calibrated_gyro is i16 at +/-2000 dps full scale, hardware DLPF at 51 Hz already applied
 const GYRO_SCALE: f32 = 2000.0 * fusion::DEG_TO_RAD / 32768.0; // i16 → rad/s
 
-// max roll/pitch command from stick (±25°)
+// max roll/pitch command from stick (+/- 25 deg)
 const MAX_TILT_RAD: f32 = 25.0 * fusion::DEG_TO_RAD;
 
 // outer loop P gains, matches flix ROLL_P / YAW_P
 const ANGLE_P_ROLL_PITCH: f32 = 6.0;
 const ANGLE_P_YAW: f32 = 0.5;
+
+const RATE_KP_ROLL_PITCH: f32 = 0.03;
+const RATE_KI_ROLL_PITCH: f32 = 0.01;
+const RATE_KD_ROLL_PITCH: f32 = 0.001;
+
+const RATE_KP_YAW: f32 = 0.0;
+const RATE_KI_YAW: f32 = 0.0;
+const RATE_KD_YAW: f32 = 0.0;
+
+// max angle any single DMP sample can plausibly rotate by since the last accepted sample
+const MAX_QUAT_JUMP_RAD: f32 = 60.0 * fusion::DEG_TO_RAD;
 
 /// PID
 ///
@@ -149,10 +160,46 @@ fn quat_from_euler(roll: f32, pitch: f32, yaw: f32) -> icm20948::dmp::Quaternion
 async fn read_dmp(
     sensor: &mut Sensor20948<'_>,
     log_counter: &mut u32,
+    last_quat: &mut Option<icm20948::dmp::Quaternion>,
 ) -> Option<(icm20948::dmp::Quaternion, Vector3<f32>)> {
     match sensor.read_dmp().await {
         Ok(Some(data)) => {
             let quat = data.quaternion_6axis.or(data.quaternion_9axis)?;
+
+            // reject corrupted DMP packets - a valid unit quaternion always has norm ~= 1,
+            // but a byte-misaligned read (e.g. a flipped header bit) produces components
+            // wildly outside that bound rather than a subtle numerical error, so a generous
+            // tolerance still catches it without rejecting legitimate quantization noise
+            let norm_sq = quat.w * quat.w + quat.x * quat.x + quat.y * quat.y + quat.z * quat.z;
+            if !(0.9..=1.1).contains(&norm_sq) {
+                defmt::warn!(
+                    "DMP quaternion failed norm check: w: {} x: {} y: {} z: {} norm_sq: {}",
+                    quat.w,
+                    quat.x,
+                    quat.y,
+                    quat.z,
+                    norm_sq
+                );
+                return None;
+            }
+
+            // reject packets that still pass the norm check above but imply an impossible
+            // jump from the last accepted orientation - the 6-axis packet only carries x/y/z
+            // on the wire and derives w to force unit norm, so corrupted x/y/z bytes that
+            // happen to sum to <= 1 slip past the norm check as a "valid" but wrong orientation
+            if let Some(prev) = *last_quat {
+                let dot = (prev.w * quat.w + prev.x * quat.x + prev.y * quat.y + prev.z * quat.z)
+                    .clamp(-1.0, 1.0);
+                let jump = 2.0 * libm::acosf(dot.abs());
+                if jump > MAX_QUAT_JUMP_RAD {
+                    defmt::warn!(
+                        "DMP quaternion failed continuity check: {}° jump from last sample",
+                        jump * fusion::RAD_TO_DEG
+                    );
+                    return None;
+                }
+            }
+
             let (gx, gy, gz) = data.calibrated_gyro?;
             let gyro = Vector3::new(
                 gx as f32 * GYRO_SCALE,
@@ -174,11 +221,17 @@ async fn read_dmp(
                     e.yaw * fusion::RAD_TO_DEG,
                 );
             }
+            *last_quat = Some(quat);
             Some((quat, gyro))
         }
         Err(icm20948::Error::FifoOverflow) => {
-            defmt::warn!("DMP FIFO overflow — resetting");
-            sensor.reset_fifo().await.ok();
+            defmt::warn!("DMP FIFO overflow");
+            // flag whatever telemetry is already cached so ground control sees this happened,
+            // even though we have no fresh sample to publish this tick
+            #[cfg(feature = "telemetry")]
+            if let Some((pkt, _)) = wifi::TELEMETRY.lock().await.as_mut() {
+                pkt.set_fifo_overflow(true);
+            }
             None
         }
         Err(e) => {
@@ -196,11 +249,22 @@ pub async fn run_dmp(
     motors: Motors<'_>,
 ) {
     let mut log_counter: u32 = 0;
+    let mut last_quat: Option<icm20948::dmp::Quaternion> = None;
 
-    // inner rate PIDs, gains match flix ROLLRATE / PITCHRATE / YAWRATE
-    let mut roll_pid = Pid::new(0.05, 0.0, 0.001, 0.3);
-    let mut pitch_pid = Pid::new(0.05, 0.0, 0.001, 0.3);
-    let mut yaw_pid = Pid::new(0.1, 0.0, 0.0, 0.3);
+    // inner rate PIDs
+    let mut roll_pid = Pid::new(
+        RATE_KP_ROLL_PITCH,
+        RATE_KI_ROLL_PITCH,
+        RATE_KD_ROLL_PITCH,
+        0.3,
+    );
+    let mut pitch_pid = Pid::new(
+        RATE_KP_ROLL_PITCH,
+        RATE_KI_ROLL_PITCH,
+        RATE_KD_ROLL_PITCH,
+        0.3,
+    );
+    let mut yaw_pid = Pid::new(RATE_KP_YAW, RATE_KI_YAW, RATE_KD_YAW, 0.3);
 
     let mut target_yaw: f32 = 0.0;
     let mut yaw_init = false;
@@ -210,34 +274,11 @@ pub async fn run_dmp(
     loop {
         int_pin.wait_for_high().await;
 
-        let (quat, g) = match read_dmp(&mut sensor, &mut log_counter).await {
-            Some(d) => d,
-            None => continue,
-        };
-
-        let now = Instant::now();
-        let dt = last_instant
-            .map(|t| now.duration_since(t).as_micros() as f32 / 1_000_000.0)
-            .unwrap_or(0.0);
-        last_instant = Some(now);
-
-        let euler = quat.to_euler_angles();
-
-        // snapshot controls once — used for both the failsafe check below and telemetry
+        // controls/armed/failsafe check runs every tick, independent of whether the DMP
+        // read below succeeds
         let controls = *wifi::CONTROLS.lock().await;
         let fresh = controls.is_some_and(|(_, at)| at.elapsed() < Duration::from_millis(500));
         let armed = fresh && controls.is_some_and(|(p, _)| p.armed());
-
-        // failsafe: zero motors if no packet or packet is stale (>500 ms)
-        let pkt = match controls {
-            Some((p, _)) if fresh => p,
-            _ => {
-                motors.turn_off();
-                #[cfg(feature = "telemetry")]
-                publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
-                continue;
-            }
-        };
 
         if !last_armed && armed {
             defmt::info!("ARMED");
@@ -252,10 +293,30 @@ pub async fn run_dmp(
 
         if !armed {
             motors.turn_off();
-            #[cfg(feature = "telemetry")]
-            publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
-            continue;
         }
+
+        let (quat, g) = match read_dmp(&mut sensor, &mut log_counter, &mut last_quat).await {
+            Some(d) => d,
+            None => continue,
+        };
+
+        let now = Instant::now();
+        let dt = last_instant
+            .map(|t| now.duration_since(t).as_micros() as f32 / 1_000_000.0)
+            .unwrap_or(0.0);
+        last_instant = Some(now);
+
+        let euler = quat.to_euler_angles();
+
+        // failsafe: zero motors if no packet, packet is stale (>500 ms), or disarmed
+        let pkt = match controls.filter(|_| armed) {
+            Some((p, _)) => p,
+            None => {
+                #[cfg(feature = "telemetry")]
+                publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
+                continue;
+            }
+        };
 
         // would be controlAttitude (flix)
         // DMP gives us the fused quaternion directly instead of running Mahony/Madgwick
@@ -375,8 +436,9 @@ pub async fn run_dmp(
 #[cfg(feature = "visualize")]
 pub async fn run_dmp_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>) {
     let mut log_counter: u32 = 0;
+    let mut last_quat: Option<icm20948::dmp::Quaternion> = None;
     loop {
         int_pin.wait_for_high().await;
-        read_dmp(&mut sensor, &mut log_counter).await;
+        read_dmp(&mut sensor, &mut log_counter, &mut last_quat).await;
     }
 }
