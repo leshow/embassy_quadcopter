@@ -48,6 +48,7 @@ const MAX_TILT_RAD: f32 = 25.0 * fusion::DEG_TO_RAD;
 const ANGLE_P_ROLL_PITCH: f32 = 6.0;
 const ANGLE_P_YAW: f32 = 2.0;
 
+// inner loop
 const RATE_KP_ROLL_PITCH: f32 = 0.05;
 const RATE_KI_ROLL_PITCH: f32 = 0.;
 const RATE_KD_ROLL_PITCH: f32 = 0.;
