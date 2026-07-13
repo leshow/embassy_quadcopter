@@ -162,6 +162,10 @@ cargo test -p libs --features telemetry
 cargo test -p libs --features telemetry-verbose
 ```
 
+## Docs
+
+Check the `docs/` directory for some more info on assembly, setting up different controllers, sensors, etc.
+
 ## LLM usage
 
 Docs and tests are sometimes generated with the use of LLMs, along with explanation/discovery, but the purpose of this project is to actually learn, so the code is still written by a human (hi!)
