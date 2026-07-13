@@ -44,15 +44,15 @@ const GYRO_SCALE: f32 = 2000.0 * fusion::DEG_TO_RAD / 32768.0; // i16 → rad/s
 // max roll/pitch command from stick (+/- 25 deg)
 const MAX_TILT_RAD: f32 = 25.0 * fusion::DEG_TO_RAD;
 
-// outer loop P gains, matches flix ROLL_P / YAW_P
+// outer loop P gains
 const ANGLE_P_ROLL_PITCH: f32 = 6.0;
-const ANGLE_P_YAW: f32 = 0.5;
+const ANGLE_P_YAW: f32 = 2.0;
 
-const RATE_KP_ROLL_PITCH: f32 = 0.03;
-const RATE_KI_ROLL_PITCH: f32 = 0.01;
-const RATE_KD_ROLL_PITCH: f32 = 0.001;
+const RATE_KP_ROLL_PITCH: f32 = 0.05;
+const RATE_KI_ROLL_PITCH: f32 = 0.;
+const RATE_KD_ROLL_PITCH: f32 = 0.;
 
-const RATE_KP_YAW: f32 = 0.0;
+const RATE_KP_YAW: f32 = 0.2;
 const RATE_KI_YAW: f32 = 0.0;
 const RATE_KD_YAW: f32 = 0.0;
 

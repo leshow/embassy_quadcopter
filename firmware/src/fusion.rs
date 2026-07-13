@@ -62,7 +62,7 @@ pub struct Mahony {
     pub params: MahonyParams,
 }
 
-// Builder sentinel types
+// Builder phantom types
 pub struct NoSensor;
 pub struct NoFilter;
 // Builder
