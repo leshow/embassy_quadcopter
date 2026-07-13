@@ -1,12 +1,10 @@
 use embassy_time::{Duration, Instant};
 use esp_hal::gpio;
 #[cfg(feature = "telemetry")]
-use icm20948::dmp::EulerAngles;
-#[cfg(feature = "telemetry")]
 use libs::control::TelemetryPacket;
-#[cfg(not(feature = "dmp"))]
-use nalgebra::UnitQuaternion;
-use nalgebra::Vector3;
+#[cfg(feature = "dmp")]
+use nalgebra::Quaternion;
+use nalgebra::{UnitQuaternion, Vector3};
 
 #[cfg(not(feature = "dmp"))]
 use crate::sensors::ImuRead;
@@ -18,15 +16,15 @@ use crate::{Motors, Sensor20948, fusion, wifi};
 #[cfg(feature = "telemetry")]
 #[allow(clippy::too_many_arguments)]
 async fn publish_telemetry(
-    euler: EulerAngles,
+    euler: (f32, f32, f32),       // (roll, pitch, yaw) radians
     motors: (u16, u16, u16, u16), // fl fr rl rr
     armed: bool,
     failsafe: bool,
     gyro: Vector3<f32>,
 ) {
-    let roll_deg = euler.roll * fusion::RAD_TO_DEG;
-    let pitch_deg = euler.pitch * fusion::RAD_TO_DEG;
-    let yaw_deg = euler.yaw * fusion::RAD_TO_DEG;
+    let roll_deg = euler.0 * fusion::RAD_TO_DEG;
+    let pitch_deg = euler.1 * fusion::RAD_TO_DEG;
+    let yaw_deg = euler.2 * fusion::RAD_TO_DEG;
 
     #[cfg(not(feature = "telemetry-verbose"))]
     let _ = &gyro;
@@ -123,16 +121,6 @@ impl Pid {
     }
 }
 
-// rotate (0, 0, 1) by quaternion (flix Quaternion::rotateVector(up, q))
-fn rotate_up(q: &icm20948::dmp::Quaternion) -> Vector3<f32> {
-    let (w, x, y, z) = (q.w, q.x, q.y, q.z);
-    Vector3::new(
-        2.0 * (x * z + w * y),
-        2.0 * (y * z - w * x),
-        w * w - x * x - y * y + z * z,
-    )
-}
-
 // normalises an angle to [-pi, pi] for the shortest-path yaw error
 fn wrap_angle(a: f32) -> f32 {
     use core::f32::consts::PI;
@@ -148,19 +136,6 @@ fn wrap_angle(a: f32) -> f32 {
 //     (a + PI).rem_euclid(2.0 * PI) - PI
 // }
 
-// flix Quaternion::fromEuler ZYX convention
-fn quat_from_euler(roll: f32, pitch: f32, yaw: f32) -> icm20948::dmp::Quaternion {
-    let (sr, cr) = (libm::sinf(roll * 0.5), libm::cosf(roll * 0.5));
-    let (sp, cp) = (libm::sinf(pitch * 0.5), libm::cosf(pitch * 0.5));
-    let (sy, cy) = (libm::sinf(yaw * 0.5), libm::cosf(yaw * 0.5));
-    icm20948::dmp::Quaternion::new(
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    )
-}
-
 // reads one DMP FIFO frame, returns (quaternion, gyro_rad_s) or None if no usable data
 // DMP software fusion. calibrated_gyro replaces raw gyro register reads
 #[cfg(feature = "dmp")]
@@ -168,7 +143,7 @@ async fn read_dmp(
     sensor: &mut Sensor20948<'_>,
     log_counter: &mut u32,
     last_quat: &mut Option<icm20948::dmp::Quaternion>,
-) -> Option<(icm20948::dmp::Quaternion, Vector3<f32>)> {
+) -> Option<(UnitQuaternion<f32>, Vector3<f32>)> {
     match sensor.read_dmp().await {
         Ok(Some(data)) => {
             let quat = data.quaternion_6axis.or(data.quaternion_9axis)?;
@@ -190,6 +165,8 @@ async fn read_dmp(
                 return None;
             }
 
+            // TODO: maybe remove
+            // was getting some corrupted packets out of the FIFO queue
             // reject packets that still pass the norm check above but imply an impossible
             // jump from the last accepted orientation - the 6-axis packet only carries x/y/z
             // on the wire and derives w to force unit norm, so corrupted x/y/z bytes that
@@ -213,23 +190,28 @@ async fn read_dmp(
                 gy as f32 * GYRO_SCALE,
                 gz as f32 * GYRO_SCALE,
             );
+            // validated above (norm + continuity) so this is trusted, legitimate data - but
+            // norm_sq is only checked to within 0.9..=1.1, not exactly 1.0, and transform_vector
+            // on a non-unit quaternion produces a distorted (not just imprecise) result, so
+            // normalize here rather than new_unchecked
+            let uq = UnitQuaternion::new_normalize(Quaternion::new(quat.w, quat.x, quat.y, quat.z));
             *log_counter += 1;
             if *log_counter >= crate::LOG_EVERY_N {
                 *log_counter = 0;
-                let e = quat.to_euler_angles();
+                let (roll, pitch, yaw) = uq.euler_angles();
                 defmt::debug!(
                     "DMP w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
-                    quat.w,
-                    quat.x,
-                    quat.y,
-                    quat.z,
-                    e.roll * fusion::RAD_TO_DEG,
-                    e.pitch * fusion::RAD_TO_DEG,
-                    e.yaw * fusion::RAD_TO_DEG,
+                    uq.w,
+                    uq.i,
+                    uq.j,
+                    uq.k,
+                    roll * fusion::RAD_TO_DEG,
+                    pitch * fusion::RAD_TO_DEG,
+                    yaw * fusion::RAD_TO_DEG,
                 );
             }
             *last_quat = Some(quat);
-            Some((quat, gyro))
+            Some((uq, gyro))
         }
         Err(icm20948::Error::FifoOverflow) => {
             defmt::warn!("DMP FIFO overflow");
@@ -288,25 +270,24 @@ async fn read_fusion<F: ImuFusion>(
     filter: &mut F,
     dt: f32,
     log_counter: &mut u32,
-) -> Option<(icm20948::dmp::Quaternion, Vector3<f32>)> {
+) -> Option<(UnitQuaternion<f32>, Vector3<f32>)> {
     match sensor.read().await {
         Ok((accel, gyro)) => {
-            let uq = filter.update_imu(dt, accel, gyro);
-            let quat = icm20948::dmp::Quaternion::new(uq.w, uq.i, uq.j, uq.k);
+            let quat = filter.update_imu(dt, accel, gyro);
 
             *log_counter += 1;
             if *log_counter >= crate::LOG_EVERY_N {
                 *log_counter = 0;
-                let e = quat.to_euler_angles();
+                let (roll, pitch, yaw) = quat.euler_angles();
                 defmt::debug!(
                     "fusion w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}°",
                     quat.w,
-                    quat.x,
-                    quat.y,
-                    quat.z,
-                    e.roll * fusion::RAD_TO_DEG,
-                    e.pitch * fusion::RAD_TO_DEG,
-                    e.yaw * fusion::RAD_TO_DEG,
+                    quat.i,
+                    quat.j,
+                    quat.k,
+                    roll * fusion::RAD_TO_DEG,
+                    pitch * fusion::RAD_TO_DEG,
+                    yaw * fusion::RAD_TO_DEG,
                 );
             }
             Some((quat, gyro))
@@ -404,7 +385,7 @@ pub async fn run_control(
             (quat, g, dt)
         };
 
-        let euler = quat.to_euler_angles();
+        let euler = quat.euler_angles();
 
         // failsafe: zero motors if no packet, packet is stale (>500 ms), or disarmed
         let pkt = match controls.filter(|_| armed) {
@@ -419,7 +400,7 @@ pub async fn run_control(
         // would be controlAttitude (flix)
         // DMP gives us the fused quaternion directly instead of running Mahony/Madgwick
 
-        let actual_yaw = euler.yaw;
+        let actual_yaw = euler.2;
         let t = pkt.throttle as f32 / 100.0;
 
         // latch heading on first armed tick (flix: yawTarget initialised from attitude.getYaw())
@@ -446,7 +427,7 @@ pub async fn run_control(
         };
 
         // build target attitude quaternion from stick angles (flix Quaternion::fromEuler)
-        let target_quat = quat_from_euler(
+        let target_quat = UnitQuaternion::from_euler_angles(
             pkt.roll * MAX_TILT_RAD,
             pkt.pitch * MAX_TILT_RAD,
             target_yaw,
@@ -462,7 +443,10 @@ pub async fn run_control(
 
         // up-vector cross product gives roll/pitch error (flix rotationVectorBetween)
         // arg order matches flix: actual * target (swapped gives negated error vector)
-        let att_err = rotate_up(&quat).cross(&rotate_up(&target_quat)); // flix Vector::rotationVectorBetween - cross product of two up-vectors gives the attitude error
+        let up = Vector3::z();
+        let att_err = quat
+            .transform_vector(&up)
+            .cross(&target_quat.transform_vector(&up)); // flix Vector::rotationVectorBetween - cross product of two up-vectors gives the attitude error
         let roll_rate_sp = ANGLE_P_ROLL_PITCH * att_err.x;
         let pitch_rate_sp = ANGLE_P_ROLL_PITCH * att_err.y;
         let yaw_rate_sp = ANGLE_P_YAW * wrap_angle(target_yaw - actual_yaw) + yaw_ff;

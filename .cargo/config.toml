@@ -14,12 +14,17 @@ rustflags = [
 # c3
 build-c3 = "build -p embassy_quad --target riscv32imc-unknown-none-elf"
 flash-c3 = "run   -p embassy_quad --target riscv32imc-unknown-none-elf"
+build-c3-fusion = "build -p embassy_quad --target riscv32imc-unknown-none-elf --no-default-features --features c3,telemetry"
 flash-c3-fusion = "run -p embassy_quad --target riscv32imc-unknown-none-elf --no-default-features --features c3,telemetry"
 # c6
 build-c6 = "build -p embassy_quad --no-default-features --features c6 --target riscv32imac-unknown-none-elf"
 flash-c6 = "run   -p embassy_quad --no-default-features --features c6 --target riscv32imac-unknown-none-elf"
+build-c6-fusion = "build -p embassy_quad --target riscv32imac-unknown-none-elf --no-default-features --features c6,telemetry"
+flash-c6-fusion = "run -p embassy_quad --target riscv32imac-unknown-none-elf --no-default-features --features c6,telemetry"
+
 # helpers
 ground_control = "build --manifest-path ground_control/Cargo.toml --target x86_64-unknown-linux-gnu"
+gc = "run --release --manifest-path ground_control/Cargo.toml --target x86_64-unknown-linux-gnu"
 visualize = "build --manifest-path visualizer/Cargo.toml --target x86_64-unknown-linux-gnu"
 erase-flash = "!espflash erase-region 0x10000 0x300000"
 
