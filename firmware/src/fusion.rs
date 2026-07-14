@@ -566,6 +566,32 @@ impl Fusion<MPU6050, Mahony> {
     }
 }
 
+// generalizes "fuse one accel+gyro sample into an orientation" across whichever filter
+// FusionBuilder was configured with. Madgwick/Vqf/Mahony all expose a matching IMU-only
+// update_imu for the ICM20948; Complementary isn't included since its only ICM20948 impl
+// requires a magnetometer reading, which read_fusion below doesn't take.
+trait ImuFusion {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32>;
+}
+
+impl ImuFusion for Fusion<ICM20948, Madgwick> {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+        Self::update_imu(self, dt, a, g)
+    }
+}
+
+impl ImuFusion for Fusion<ICM20948, Vqf> {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+        Self::update_imu(self, dt, a, g)
+    }
+}
+
+impl ImuFusion for Fusion<ICM20948, Mahony> {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+        Self::update_imu(self, dt, a, g)
+    }
+}
+
 pub mod utils {
     /// Core complementary filter step. Alpha is the gyro trust weight (e.g. 0.98).
     pub fn complementary_filter(

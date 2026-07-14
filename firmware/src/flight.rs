@@ -232,36 +232,6 @@ async fn read_dmp(
     }
 }
 
-// generalizes "fuse one accel+gyro sample into an orientation" across whichever filter
-// FusionBuilder was configured with. Madgwick/Vqf/Mahony all expose a matching IMU-only
-// update_imu for the ICM20948; Complementary isn't included since its only ICM20948 impl
-// requires a magnetometer reading, which read_fusion below doesn't take.
-#[cfg(not(feature = "dmp"))]
-trait ImuFusion {
-    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32>;
-}
-
-#[cfg(not(feature = "dmp"))]
-impl ImuFusion for fusion::Fusion<fusion::ICM20948, fusion::Madgwick> {
-    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
-        Self::update_imu(self, dt, a, g)
-    }
-}
-
-#[cfg(not(feature = "dmp"))]
-impl ImuFusion for fusion::Fusion<fusion::ICM20948, fusion::Vqf> {
-    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
-        Self::update_imu(self, dt, a, g)
-    }
-}
-
-#[cfg(not(feature = "dmp"))]
-impl ImuFusion for fusion::Fusion<fusion::ICM20948, fusion::Mahony> {
-    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
-        Self::update_imu(self, dt, a, g)
-    }
-}
-
 // reads raw accel/gyro and fuses them into an orientation quaternion via whichever filter
 // implements ImuFusion. same (Quaternion, gyro_rad_s) shape as read_dmp, so the rest of the
 // control loop is unchanged regardless of which sensor-read path or filter is active
