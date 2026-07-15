@@ -297,10 +297,10 @@ pub async fn run_control(
     mut sensor: Sensor20948<'_>,
     mut int_pin: gpio::Input<'static>,
     motors: Motors<'_>,
-    #[cfg_attr(feature = "dmp", allow(unused_mut))] // only mutated by the non-dmp arm block
-    mut cal_failed: bool,
 ) {
     let mut log_counter: u32 = 0;
+    #[allow(unused)] // only mutated by the non-dmp arm block, only read when telemetry is on
+    let mut cal_failed = false;
     #[cfg(feature = "dmp")]
     let mut last_quat: Option<icm20948::dmp::Quaternion> = None;
     #[cfg(not(feature = "dmp"))]
