@@ -2,8 +2,8 @@
 
 use embedded_hal_async::i2c::I2c;
 use icm20948::{
-    AccelConfig, AccelDlpf, AccelFullScale, GyroConfig, GyroDlpf, GyroFullScale, I2cInterface,
-    Icm20948Driver, MagConfig,
+    AccelCalibration, AccelConfig, AccelDlpf, AccelFullScale, GyroCalibration, GyroConfig,
+    GyroDlpf, GyroFullScale, I2cInterface, Icm20948Driver, MagConfig,
     interrupt::{InterruptConfig, InterruptPinConfig},
 };
 use mpu9250_async::{Mpu6050, Mpu6050Error};
@@ -174,6 +174,31 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
 
         defmt::info!("ICM20948 init OK");
         Ok(Self { driver })
+    }
+
+    /// averages `samples` stationary raw gyro readings into a per-axis zero-rate offset, automatically to future read_gyroscope_* calls.
+    /// only requires the device to not be rotating, not to be level
+    pub async fn calibrate_gyroscope(
+        &mut self,
+        samples: u16,
+    ) -> Result<GyroCalibration, icm20948::Error<I::Error>> {
+        // matches icm20948-rs's own calibration_async example
+        self.driver
+            .calibrate_gyroscope_with_threshold(samples, 100)
+            .await
+    }
+
+    /// averages `samples` stationary raw accel readings into a per-axis offset
+    /// stored on the driver and applied automatically to future read_accelerometer calls.
+    /// requires the device LEVEL with Z pointing up
+    pub async fn calibrate_accelerometer(
+        &mut self,
+        samples: u16,
+    ) -> Result<AccelCalibration, icm20948::Error<I::Error>> {
+        // matches icm20948-rs's own calibration_async example
+        self.driver
+            .calibrate_accelerometer_with_threshold(samples, 10)
+            .await
     }
 
     #[cfg(feature = "dmp")]

@@ -190,7 +190,8 @@ async fn run(
     )
     .await;
     // ICM20948
-    let sensor = match Sensor::init_icm20948(i2c).await {
+    #[cfg_attr(feature = "dmp", allow(unused_mut))] // only calibrate_* (non-dmp) needs &mut
+    let mut sensor = match Sensor::init_icm20948(i2c).await {
         Ok(s) => s,
         Err(e) => {
             defmt::error!("ICM20948 init failed: {}", defmt::Debug2Format(&e));
@@ -198,7 +199,27 @@ async fn run(
         }
     };
 
-    flight::run_control(sensor, int_pin, motors).await;
+    // boot-time calibration
+    // must be level
+    #[cfg(all(feature = "telemetry", not(feature = "dmp")))]
+    flight::publish_calibrating(false).await;
+    #[cfg_attr(feature = "dmp", allow(unused_mut))] // only mutated by the non-dmp block below
+    let mut cal_failed = false;
+    #[cfg(not(feature = "dmp"))]
+    {
+        defmt::info!("Calibrating gyroscope...");
+        if let Err(e) = sensor.calibrate_gyroscope(200).await {
+            defmt::warn!("gyro calibration failed: {}", defmt::Debug2Format(&e));
+            cal_failed = true;
+        }
+        defmt::info!("Calibrating accelerometer - keep level and still...");
+        if let Err(e) = sensor.calibrate_accelerometer(200).await {
+            defmt::warn!("accel calibration failed: {}", defmt::Debug2Format(&e));
+            cal_failed = true;
+        }
+    }
+
+    flight::run_control(sensor, int_pin, motors, cal_failed).await;
 }
 
 pub(crate) type Sensor20948<'a> =
