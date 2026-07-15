@@ -134,7 +134,7 @@ async fn udp_task(stack: Stack<'static>) {
     socket.bind(port).expect("UDP bind failed");
     defmt::info!("UDP listening on port {}", libs::UDP_PORT_DEFAULT);
 
-    let mut buf = [0u8; control::DEFAULT_SIZE]; // sized to exact packet; rejects anything else
+    let mut buf = [0u8; control::DEFAULT_SIZE]; // sized to exact packet
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((n, meta)) if n == control::DEFAULT_SIZE => {

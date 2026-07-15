@@ -18,37 +18,37 @@
 
 ### Power
 
-| From                   | To                     | Notes                                  |
-| ---------------------- | ---------------------- | -------------------------------------- |
-| Battery +              | Boost converter IN+    |                                        |
-| Battery −              | Boost converter IN−    |                                        |
-| Boost converter 5V out | ESP32 VIN              | 5V regulated                           |
-| Boost converter GND    | ESP32 GND              | Common ground for all logic            |
-| 470μF cap +            | Boost converter 5V out | Positive leg to 5V out                 |
-| 470μF cap −            | Boost converter GND    | Prevents brownout during motor inrush  |
-| Battery +              | MOSFET Drain ×4        | Raw battery rail to motor switches     |
-| Battery − / GND        | All GND lines          | Shared ground for motors and logic     |
+| From                   | To                     | Notes                                 |
+| ---------------------- | ---------------------- | ------------------------------------- |
+| Battery +              | Boost converter IN+    |                                       |
+| Battery −              | Boost converter IN−    |                                       |
+| Boost converter 5V out | ESP32 VIN              | 5V regulated                          |
+| Boost converter GND    | ESP32 GND              | Common ground for all logic           |
+| 470μF cap +            | Boost converter 5V out | Positive leg to 5V out                |
+| 470μF cap −            | Boost converter GND    | Prevents brownout during motor inrush |
+| Battery +              | MOSFET Drain ×4        | Raw battery rail to motor switches    |
+| Battery − / GND        | All GND lines          | Shared ground for motors and logic    |
 
 ### ICM-20948 IMU
 
-| ICM-20948 | ESP32-C3 | Notes                              |
-| --------- | -------- | ---------------------------------- |
-| VIN       | 3.3V     | Regulated output from ESP32        |
-| GND       | GND      |                                    |
-| SDA       | GPIO20   | I2C data                           |
-| SCL       | GPIO21   | I2C clock (400 kHz)                |
-| INT       | GPIO6    | Data-ready interrupt               |
-| CS        | 3.3V     | Tie HIGH to select I2C mode        |
-| SDO       | 3.3V     | Sets I2C address to 0x69 (AD0 high)|
+| ICM-20948 | ESP32-C3 | Notes                               |
+| --------- | -------- | ----------------------------------- |
+| VIN       | 3.3V     | Regulated output from ESP32         |
+| GND       | GND      |                                     |
+| SDA       | GPIO20   | I2C data                            |
+| SCL       | GPIO21   | I2C clock (400 kHz)                 |
+| INT       | GPIO6    | Data-ready interrupt                |
+| CS        | 3.3V     | Tie HIGH to select I2C mode         |
+| SDO       | 3.3V     | Sets I2C address to 0x69 (AD0 high) |
 
 ### Motors (via 100N03A MOSFET)
 
-| Motor       | Gate (ESP32) | Gate-Source    | Drain      | Source |
-| ----------- | ------------ | -------------- | ---------- | ------ |
-| Front Left  | GPIO5        | 10k pull-down  | Battery +  | GND    |
-| Front Right | GPIO9        | 10k pull-down  | Battery +  | GND    |
-| Rear Left   | GPIO1        | 10k pull-down  | Battery +  | GND    |
-| Rear Right  | GPIO10       | 10k pull-down  | Battery +  | GND    |
+| Motor       | Gate (ESP32) | Gate-Source   | Drain     | Source |
+| ----------- | ------------ | ------------- | --------- | ------ |
+| Front Left  | GPIO10       | 10k pull-down | Battery + | GND    |
+| Front Right | GPIO9        | 10k pull-down | Battery + | GND    |
+| Rear Left   | GPIO1        | 10k pull-down | Battery + | GND    |
+| Rear Right  | GPIO3        | 10k pull-down | Battery + | GND    |
 
 Motor + on all four motors connects directly to Battery +. Motor − connects to MOSFET Drain.
 
@@ -86,10 +86,10 @@ Motor + on all four motors connects directly to Battery +. Motor − connects to
  GPIO21 ──┤ SCL                   ├──► ICM-20948 SCL
   GPIO6 ──┤ INT                   ├──► ICM-20948 INT
           │                       │
-  GPIO5 ──┤ FL PWM                ├──► MOSFET FL Gate
+ GPIO10 ──┤ FL PWM                ├──► MOSFET FL Gate
   GPIO9 ──┤ FR PWM                ├──► MOSFET FR Gate
   GPIO1 ──┤ RL PWM                ├──► MOSFET RL Gate
- GPIO10 ──┤ RR PWM                ├──► MOSFET RR Gate
+  GPIO3 ──┤ RR PWM                ├──► MOSFET RR Gate
           └───────────────────────┘
 ```
 
@@ -99,15 +99,15 @@ Motor + on all four motors connects directly to Battery +. Motor − connects to
                     FRONT
                       ▲
                       │
-     FL (GPIO5)       │       FR (GPIO9)
+     FL (GPIO10)      │       FR (GPIO9)
          ◎────────────┼────────────◎
          │            │            │
-         │         ┌──┴──┐         │
-         │         │ C3  │         │
-         │         └──┬──┘         │
+         │     ┌─    ─┴──┐         │
+         │     |  ICM20948  │      │
+         │     └──  ──┬──┘         │
          │            │            │
          ◎────────────┼────────────◎
-     RL (GPIO1)       │       RR (GPIO10)
+     RL (GPIO1)       │       RR (GPIO3)
                       │
                       ▼
                      BACK

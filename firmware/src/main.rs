@@ -190,13 +190,36 @@ async fn run(
     )
     .await;
     // ICM20948
-    let sensor = match Sensor::init_icm20948(i2c).await {
+    #[cfg_attr(feature = "dmp", allow(unused_mut))] // only calibrate_* (non-dmp) needs &mut
+    let mut sensor = match Sensor::init_icm20948(i2c).await {
         Ok(s) => s,
         Err(e) => {
             defmt::error!("ICM20948 init failed: {}", defmt::Debug2Format(&e));
             panic!("ICM20948 init failed");
         }
     };
+
+    // boot-time calibration - give time to place it flat, level, and step back before
+    // sampling starts (gyro needs stillness, accel needs level+still)
+    #[cfg(not(feature = "dmp"))]
+    {
+        defmt::info!("Place the drone level and step back - calibrating in 3s...");
+        embassy_time::Timer::after_millis(3000).await;
+    }
+
+    #[cfg(all(feature = "telemetry", not(feature = "dmp")))]
+    flight::publish_calibrating(false).await;
+    #[cfg(not(feature = "dmp"))]
+    {
+        defmt::info!("Calibrating gyroscope...");
+        if let Err(e) = sensor.calibrate_gyroscope(200).await {
+            defmt::warn!("gyro calibration failed: {}", defmt::Debug2Format(&e));
+        }
+        defmt::info!("Calibrating accelerometer - keep level and still...");
+        if let Err(e) = sensor.calibrate_accelerometer(200).await {
+            defmt::warn!("accel calibration failed: {}", defmt::Debug2Format(&e));
+        }
+    }
 
     flight::run_control(sensor, int_pin, motors).await;
 }

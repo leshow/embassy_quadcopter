@@ -6,7 +6,7 @@ use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use libs::control::ControlPacket;
 #[cfg(feature = "telemetry")]
 use libs::control::{TELEMETRY_SIZE, TelemetryPacket};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -38,11 +38,21 @@ fn main() -> anyhow::Result<()> {
         };
 
         let mut pkt = ControlPacket::new(0, 0.0, 0.0, 0.0, false);
+        #[cfg(feature = "telemetry")]
+        let mut was_calibrating = false;
+        #[cfg(feature = "telemetry")]
+        let mut was_cal_failed = false;
+        // only log the routine telemetry line when something actually changed
+        #[cfg(feature = "telemetry")]
+        let mut last_telemetry: Option<TelemetryPacket> = None;
 
         'inner: loop {
             // block up to 20ms waiting for input, then send current state regardless
             while let Some(Event { event, .. }) =
                 gilrs.next_event_blocking(Some(Duration::from_millis(20)))
+            // this 20ms loop drives the telemetry packets, they only get sent in response to
+            // CONTROL packets, so if no input changes (no throttle/direction),
+            // control packets still get sent every 20ms and we get telemetry data
             {
                 match event {
                     // upper half only: center = 0%, full up = 100%
@@ -88,35 +98,63 @@ fn main() -> anyhow::Result<()> {
                 match socket.recv(&mut tbuf) {
                     Ok(n) if n == TELEMETRY_SIZE => {
                         if let Some(t) = TelemetryPacket::from_bytes(&tbuf) {
-                            #[cfg(not(feature = "telemetry-verbose"))]
-                            let msg = format!(
-                                "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} motors={:?}",
-                                t.roll,
-                                t.pitch,
-                                t.yaw,
-                                t.armed(),
-                                t.failsafe(),
-                                t.fifo_overflow(),
-                                t.motors
-                            );
-                            #[cfg(feature = "telemetry-verbose")]
-                            let msg = format!(
-                                "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} motors={:?} gyro={:?}",
-                                t.roll,
-                                t.pitch,
-                                t.yaw,
-                                t.armed(),
-                                t.failsafe(),
-                                t.fifo_overflow(),
-                                t.motors,
-                                t.gyro
-                            );
-
-                            if t.fifo_overflow() {
-                                warn!("{msg}");
-                            } else {
-                                info!("{msg}");
+                            // log calibration start/stop
+                            if t.calibrating() && !was_calibrating {
+                                warn!(
+                                    "=== CALIBRATING - hold still (gyro) / keep level and still (accel) ==="
+                                );
+                            } else if !t.calibrating() && was_calibrating {
+                                info!("=== CALIBRATION COMPLETE ===");
                             }
+                            was_calibrating = t.calibrating();
+
+                            // log calibration failed/recovered after arm/disarm
+                            // accell never "recovers" if it failed on startup
+                            if t.calibration_failed() && !was_cal_failed {
+                                error!(
+                                    "=== CALIBRATION FAILED - check device log for which sensor ==="
+                                );
+                            } else if !t.calibration_failed() && was_cal_failed {
+                                info!("=== CALIBRATION RECOVERED ===");
+                            }
+                            was_cal_failed = t.calibration_failed();
+
+                            if last_telemetry != Some(t) {
+                                #[cfg(not(feature = "telemetry-verbose"))]
+                                let msg = format!(
+                                    "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} calibrating={} calibration_failed={} motors={:?}",
+                                    t.roll,
+                                    t.pitch,
+                                    t.yaw,
+                                    t.armed(),
+                                    t.failsafe(),
+                                    t.fifo_overflow(),
+                                    t.calibrating(),
+                                    t.calibration_failed(),
+                                    t.motors
+                                );
+                                #[cfg(feature = "telemetry-verbose")]
+                                let msg = format!(
+                                    "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} calibrating={} calibration_failed={} motors={:?} gyro={:?}",
+                                    t.roll,
+                                    t.pitch,
+                                    t.yaw,
+                                    t.armed(),
+                                    t.failsafe(),
+                                    t.fifo_overflow(),
+                                    t.calibrating(),
+                                    t.calibration_failed(),
+                                    t.motors,
+                                    t.gyro
+                                );
+
+                                if t.fifo_overflow() {
+                                    warn!("{msg}");
+                                } else {
+                                    info!("{msg}");
+                                }
+                            }
+                            last_telemetry = Some(t);
                         }
                     }
                     Ok(_) => {}

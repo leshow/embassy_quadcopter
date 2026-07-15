@@ -7,6 +7,8 @@ use nalgebra::Quaternion;
 use nalgebra::{UnitQuaternion, Vector3};
 
 #[cfg(not(feature = "dmp"))]
+use crate::fusion::ImuFusion;
+#[cfg(not(feature = "dmp"))]
 use crate::sensors::ImuRead;
 use crate::{Motors, Sensor20948, fusion, wifi};
 
@@ -21,6 +23,7 @@ async fn publish_telemetry(
     armed: bool,
     failsafe: bool,
     gyro: Vector3<f32>,
+    cal_failed: bool,
 ) {
     let roll_deg = euler.0 * fusion::RAD_TO_DEG;
     let pitch_deg = euler.1 * fusion::RAD_TO_DEG;
@@ -30,10 +33,20 @@ async fn publish_telemetry(
     let _ = &gyro;
 
     #[cfg(not(feature = "telemetry-verbose"))]
-    let pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe);
+    let mut pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe);
     #[cfg(feature = "telemetry-verbose")]
-    let pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe, gyro);
+    let mut pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe, gyro);
+    pkt.set_calibration_failed(cal_failed);
 
+    *wifi::TELEMETRY.lock().await = Some((pkt, Instant::now()));
+}
+
+/// publishes a placeholder telemetry snapshot flagged as calibrating, so ground control
+/// shows a live "calibrating" status
+#[cfg(all(feature = "telemetry", not(feature = "dmp")))]
+pub async fn publish_calibrating(armed: bool) {
+    let mut pkt = TelemetryPacket::new(0.0, 0.0, 0.0, (0, 0, 0, 0), armed, false);
+    pkt.set_calibrating(true);
     *wifi::TELEMETRY.lock().await = Some((pkt, Instant::now()));
 }
 
@@ -286,6 +299,8 @@ pub async fn run_control(
     motors: Motors<'_>,
 ) {
     let mut log_counter: u32 = 0;
+    #[allow(unused)] // only mutated by the non-dmp arm block, only read when telemetry is on
+    let mut cal_failed = false;
     #[cfg(feature = "dmp")]
     let mut last_quat: Option<icm20948::dmp::Quaternion> = None;
     #[cfg(not(feature = "dmp"))]
@@ -322,6 +337,25 @@ pub async fn run_control(
 
         if !last_armed && armed {
             defmt::info!("ARMED");
+
+            // recalibrate gyro bias on every arm, not accel.
+            // DMP path skips this
+            #[cfg(not(feature = "dmp"))]
+            {
+                #[cfg(feature = "telemetry")]
+                publish_calibrating(armed).await;
+                match sensor.calibrate_gyroscope(200).await {
+                    Ok(_) => cal_failed = false,
+                    Err(e) => {
+                        defmt::warn!(
+                            "gyro recalibration on arm failed: {}",
+                            defmt::Debug2Format(&e)
+                        );
+                        cal_failed = true;
+                    }
+                }
+            }
+
             roll_pid.reset();
             pitch_pid.reset();
             yaw_pid.reset();
@@ -363,7 +397,7 @@ pub async fn run_control(
             Some((p, _)) => p,
             None => {
                 #[cfg(feature = "telemetry")]
-                publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
+                publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g, cal_failed).await;
                 continue;
             }
         };
@@ -408,7 +442,7 @@ pub async fn run_control(
         if t < 0.05 {
             motors.turn_off();
             #[cfg(feature = "telemetry")]
-            publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
+            publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g, cal_failed).await;
             continue;
         }
 
@@ -480,6 +514,7 @@ pub async fn run_control(
             armed,
             false,
             g,
+            cal_failed,
         )
         .await;
     }

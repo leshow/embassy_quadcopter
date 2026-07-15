@@ -65,6 +65,28 @@ impl Flags {
             self.0 &= !0x04;
         }
     }
+
+    pub fn calibrating(&self) -> bool {
+        0x08 & self.0 != 0
+    }
+    pub fn set_calibrating(&mut self, b: bool) {
+        if b {
+            self.0 |= 0x08;
+        } else {
+            self.0 &= !0x08;
+        }
+    }
+
+    pub fn calibration_failed(&self) -> bool {
+        0x10 & self.0 != 0
+    }
+    pub fn set_calibration_failed(&mut self, b: bool) {
+        if b {
+            self.0 |= 0x10;
+        } else {
+            self.0 &= !0x10;
+        }
+    }
 }
 
 impl ControlPacket {
@@ -207,6 +229,17 @@ impl TelemetryPacket {
         self.flags.set_fifo_overflow(b);
     }
 
+    /// marks the packet as produced while the IMU is being calibrated - roll/pitch/yaw/motors
+    /// are stale placeholders while this is set, not a live reading
+    pub fn set_calibrating(&mut self, b: bool) {
+        self.flags.set_calibrating(b);
+    }
+
+    /// marks the packet as reporting a failed gyro calibration attempt (boot or on-arm).
+    pub fn set_calibration_failed(&mut self, b: bool) {
+        self.flags.set_calibration_failed(b);
+    }
+
     pub fn to_bytes(&self) -> [u8; TELEMETRY_SIZE] {
         let mut buf = [0u8; TELEMETRY_SIZE];
         buf[0..4].copy_from_slice(&TELEMETRY_MAGIC);
@@ -264,6 +297,14 @@ impl TelemetryPacket {
 
     pub fn fifo_overflow(&self) -> bool {
         self.flags.fifo_overflow()
+    }
+
+    pub fn calibrating(&self) -> bool {
+        self.flags.calibrating()
+    }
+
+    pub fn calibration_failed(&self) -> bool {
+        self.flags.calibration_failed()
     }
 }
 
@@ -465,6 +506,61 @@ mod tests {
         // doesn't disturb the other flags
         assert!(pkt.armed());
         assert!(!pkt.failsafe());
+
+        let bytes = pkt.to_bytes();
+        assert_eq!(TelemetryPacket::from_bytes(&bytes), Some(pkt));
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn test_telemetry_packet_set_calibrating() {
+        #[cfg(not(feature = "telemetry-verbose"))]
+        let mut pkt = TelemetryPacket::new(0.0, 0.0, 0.0, (0, 0, 0, 0), true, false);
+        #[cfg(feature = "telemetry-verbose")]
+        let mut pkt = TelemetryPacket::new(
+            0.0,
+            0.0,
+            0.0,
+            (0, 0, 0, 0),
+            true,
+            false,
+            Vector3::new(0.0, 0.0, 0.0),
+        );
+
+        assert!(!pkt.calibrating());
+        pkt.set_calibrating(true);
+        assert!(pkt.calibrating());
+        // doesn't disturb the other flags
+        assert!(pkt.armed());
+        assert!(!pkt.failsafe());
+
+        let bytes = pkt.to_bytes();
+        assert_eq!(TelemetryPacket::from_bytes(&bytes), Some(pkt));
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn test_telemetry_packet_set_calibration_failed() {
+        #[cfg(not(feature = "telemetry-verbose"))]
+        let mut pkt = TelemetryPacket::new(0.0, 0.0, 0.0, (0, 0, 0, 0), true, false);
+        #[cfg(feature = "telemetry-verbose")]
+        let mut pkt = TelemetryPacket::new(
+            0.0,
+            0.0,
+            0.0,
+            (0, 0, 0, 0),
+            true,
+            false,
+            Vector3::new(0.0, 0.0, 0.0),
+        );
+
+        assert!(!pkt.calibration_failed());
+        pkt.set_calibration_failed(true);
+        assert!(pkt.calibration_failed());
+        // doesn't disturb the other flags
+        assert!(pkt.armed());
+        assert!(!pkt.failsafe());
+        assert!(!pkt.calibrating());
 
         let bytes = pkt.to_bytes();
         assert_eq!(TelemetryPacket::from_bytes(&bytes), Some(pkt));

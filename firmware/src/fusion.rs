@@ -18,13 +18,10 @@ const KP_DEFAULT: f32 = 0.74; // Mahony proportional gain (matches uf-ahrs defau
 const KI_DEFAULT: f32 = 0.0012; // Mahony integral gain (matches uf-ahrs default)
 const SAMPLE_PERIOD_DEFAULT: f32 = 0.001; // 1000 Hz default
 
-// Fusion sensor tag selects the update signature; filter owns state
-pub struct Fusion<S, F> {
-    pub filter: F,
-    _sensor: PhantomData<S>,
-}
-
-//
+/// Sensor fusion
+/// F - filter type
+/// S - phantom type for sensor
+///
 /// ```
 ///         +Y (forward)
 ///          ↑
@@ -37,6 +34,11 @@ pub struct Fusion<S, F> {
 /// +Z points UP out of the chip surface
 /// -Z points DOWN into the desk
 /// ```
+pub struct Fusion<S, F> {
+    pub filter: F,
+    _sensor: PhantomData<S>,
+}
+
 pub struct ICM20948; // 9DOF: accel + gyro + mag
 pub struct MPU6050; // 6DOF: accel + gyro only
 
@@ -65,6 +67,7 @@ pub struct Mahony {
 // Builder phantom types
 pub struct NoSensor;
 pub struct NoFilter;
+
 // Builder
 pub struct FusionBuilder<S, F> {
     // alpha only matters for complementary filter
@@ -570,7 +573,7 @@ impl Fusion<MPU6050, Mahony> {
 // FusionBuilder was configured with. Madgwick/Vqf/Mahony all expose a matching IMU-only
 // update_imu for the ICM20948; Complementary isn't included since its only ICM20948 impl
 // requires a magnetometer reading, which read_fusion below doesn't take.
-trait ImuFusion {
+pub(crate) trait ImuFusion {
     fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32>;
 }
 
