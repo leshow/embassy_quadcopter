@@ -1,5 +1,5 @@
 {
     "rust-analyzer.cargo.target": "riscv32imc-unknown-none-elf",
-    "rust-analyzer.cargo.features": ["c3", "dmp"],
+    "rust-analyzer.cargo.features": ["c3", "telemetry"],
     "rust-analyzer.check.allTargets": false
 }

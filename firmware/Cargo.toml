@@ -9,6 +9,8 @@ embassy-time = "0.5"
 esp-hal = { version = "1.1", features = ["unstable"] }
 esp-rtos = { version = "0.3", features = ["embassy", "esp-radio"] }
 esp-bootloader-esp-idf = { version = "0.5" }
+esp-storage = { version = "0.9" }
+embedded-storage = "0.3"
 esp-backtrace = { version = "0.19", features = ["panic-handler", "defmt", "custom-pre-backtrace", "custom-halt"] }
 esp-println = { version = "0.17", default-features = false, features = [
 	"jtag-serial",
@@ -51,6 +53,7 @@ c3 = [
 	"esp-backtrace/esp32c3",
 	"esp-println/esp32c3",
 	"esp-radio/esp32c3",
+	"esp-storage/esp32c3",
 ]
 c6 = [
 	"esp-hal/esp32c6",
@@ -59,4 +62,5 @@ c6 = [
 	"esp-backtrace/esp32c6",
 	"esp-println/esp32c6",
 	"esp-radio/esp32c6",
+	"esp-storage/esp32c6",
 ]

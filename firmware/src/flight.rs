@@ -129,6 +129,36 @@ impl Pid {
     }
 }
 
+/// AccelBias
+///
+/// One-time accelerometer bias + scale correction, computed by the 6-orientation tumble
+/// calibration (behind `--features calibrate`) and loaded from flash at boot - see
+/// `calibration_storage`. Unlike gyro bias this isn't re-learned continuously; accel bias
+/// mostly comes from IMU mounting tilt and silicon offset, both fixed for a given build.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "dmp", allow(dead_code))] // only applied on the non-dmp (software fusion) path
+pub struct AccelBias {
+    pub bias: Vector3<f32>,
+    pub scale: Vector3<f32>,
+}
+
+impl Default for AccelBias {
+    fn default() -> Self {
+        Self {
+            bias: Vector3::zeros(),
+            scale: Vector3::new(1.0, 1.0, 1.0),
+        }
+    }
+}
+
+#[cfg_attr(feature = "dmp", allow(dead_code))]
+impl AccelBias {
+    // matches flix's apply step exactly: acc = (acc - accBias) / accScale
+    fn apply(&self, accel: Vector3<f32>) -> Vector3<f32> {
+        (accel - self.bias).component_div(&self.scale)
+    }
+}
+
 #[cfg(not(feature = "dmp"))]
 mod gyro_bias {
     use super::*;
@@ -295,12 +325,14 @@ async fn read_fusion<F: ImuFusion>(
     sensor: &mut Sensor20948<'_>,
     filter: &mut F,
     gyro_bias: &mut gyro_bias::BiasTracker,
+    accel_bias: &AccelBias,
     armed: bool,
     dt: f32,
     log_counter: &mut u32,
 ) -> Option<(UnitQuaternion<f32>, Vector3<f32>)> {
     match sensor.read().await {
         Ok((accel, gyro)) => {
+            let accel = accel_bias.apply(accel);
             let bias = gyro_bias.update(armed, accel, gyro);
             let gyro = gyro - bias;
             let quat = filter.update_imu(dt, accel, gyro);
@@ -383,6 +415,7 @@ pub async fn run_control(
     mut sensor: Sensor20948<'_>,
     mut int_pin: gpio::Input<'static>,
     motors: Motors<'_>,
+    #[cfg_attr(feature = "dmp", allow(unused))] accel_bias: AccelBias,
 ) {
     let mut log_counter: u32 = 0;
     // placeholder until accel calibration (behind the calibrate feature) can actually fail
@@ -457,6 +490,7 @@ pub async fn run_control(
                 &mut sensor,
                 &mut fusion_filter,
                 &mut gyro_bias,
+                &accel_bias,
                 armed,
                 dt,
                 &mut log_counter,
@@ -612,10 +646,14 @@ pub async fn run_dmp_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpio::
 
 // visualize-only loop for the fusion path: log orientation, no motor control, no WiFi
 #[cfg(all(feature = "visualize", not(feature = "dmp")))]
-pub async fn run_fusion_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>) {
+pub async fn run_fusion_visualizer(
+    mut sensor: Sensor20948<'_>,
+    mut int_pin: gpio::Input<'static>,
+    accel_bias: AccelBias,
+) {
     let mut log_counter: u32 = 0;
     let mut fusion_filter = fusion::FusionBuilder::new().icm20948().madgwick().build();
-    let mut gyro_bias = GyroBiasTracker::new();
+    let mut gyro_bias = gyro_bias::BiasTracker::new();
     let mut last_instant: Option<Instant> = None;
     loop {
         int_pin.wait_for_high().await;
@@ -625,6 +663,7 @@ pub async fn run_fusion_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpi
             &mut sensor,
             &mut fusion_filter,
             &mut gyro_bias,
+            &accel_bias,
             false, // no arming concept in the visualizer, motors never spin
             dt,
             &mut log_counter,

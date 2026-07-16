@@ -4,6 +4,7 @@
 #![no_main]
 extern crate alloc;
 
+use defmt::info;
 use embassy_executor::Spawner;
 use embassy_time::Timer;
 use esp_backtrace as _;
@@ -25,6 +26,8 @@ use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
+mod accel_hw_offset;
+mod calibration_storage;
 mod flight;
 mod fusion;
 mod motors;
@@ -32,7 +35,7 @@ mod panic_safety;
 mod sensors;
 mod wifi;
 
-use crate::{motors::Motors, sensors::Sensor, wifi::AP};
+use crate::{flight::AccelBias, motors::Motors, sensors::Sensor, wifi::AP};
 
 const LOOP_PERIOD_MS: u64 = 1; // 1000Hz target loop rate; shared by timer and Madgwick sample_period
 // if changing duty cycle, change this value. currently 10 bit resolution
@@ -132,6 +135,7 @@ async fn main(spawner: Spawner) {
         run(
             i2c,
             peripherals.LEDC,
+            peripherals.FLASH,
             peripherals.GPIO1,  // rear left
             peripherals.GPIO3,  // rear right
             peripherals.GPIO10, // front left
@@ -147,19 +151,27 @@ async fn main(spawner: Spawner) {
         let mut sensor = Sensor::init_icm20948(i2c)
             .await
             .expect("ICM20948 init failed");
-        sensor.run_calibration().await;
+        let accel_bias = sensor.run_calibration().await;
+
+        let mut flash_storage = esp_storage::FlashStorage::new(peripherals.FLASH);
+        if calibration_storage::store_accel_calibration(&mut flash_storage, &accel_bias) {
+            defmt::info!("calibration saved: {}", defmt::Debug2Format(&accel_bias));
+        } else {
+            defmt::error!("failed to save calibration to flash");
+        }
     }
 
     #[cfg(feature = "visualize")]
     {
         let int_pin = gpio::Input::new(peripherals.GPIO6, gpio::InputConfig::default());
-        run_visualizer(i2c, int_pin).await;
+        run_visualizer(i2c, peripherals.FLASH, int_pin).await;
     }
 }
 
 async fn run(
     i2c: I2c<'_, esp_hal::Async>,
     ledc: LEDC<'static>,
+    flash: esp_hal::peripherals::FLASH<'static>,
     rear_left_pin: impl gpio::interconnect::PeripheralOutput<'static>,
     rear_right_pin: impl gpio::interconnect::PeripheralOutput<'static>,
     front_left_pin: impl gpio::interconnect::PeripheralOutput<'static>,
@@ -200,14 +212,29 @@ async fn run(
         }
     };
 
-    flight::run_control(sensor, int_pin, motors).await;
+    // accel bias/scale from the last `--features calibrate` run, if any - see
+    // calibration_storage and flight::AccelBias
+    let mut flash_storage = esp_storage::FlashStorage::new(flash);
+    let accel_bias = calibration_storage::load_accel_calibration(&mut flash_storage)
+        .inspect(|a| {
+            info!("accel loaded from bias {}", defmt::Debug2Format(a));
+        })
+        .unwrap_or_else(|| {
+            info!("no accel found, run calibration");
+            AccelBias::default()
+        });
+    flight::run_control(sensor, int_pin, motors, accel_bias).await;
 }
 
 pub(crate) type Sensor20948<'a> =
     Sensor<icm20948::Icm20948Driver<icm20948::I2cInterface<I2c<'a, Async>>>>;
 
 #[cfg(feature = "visualize")]
-async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>, int_pin: gpio::Input<'static>) {
+async fn run_visualizer(
+    i2c: I2c<'_, esp_hal::Async>,
+    #[cfg_attr(feature = "dmp", allow(unused))] flash: esp_hal::peripherals::FLASH<'static>,
+    int_pin: gpio::Input<'static>,
+) {
     let sensor = Sensor::init_icm20948(i2c)
         .await
         .expect("ICM20948 init failed");
@@ -215,5 +242,10 @@ async fn run_visualizer(i2c: I2c<'_, esp_hal::Async>, int_pin: gpio::Input<'stat
     #[cfg(feature = "dmp")]
     flight::run_dmp_visualizer(sensor, int_pin).await;
     #[cfg(not(feature = "dmp"))]
-    flight::run_fusion_visualizer(sensor, int_pin).await;
+    {
+        let mut flash_storage = esp_storage::FlashStorage::new(flash);
+        let accel_bias =
+            calibration_storage::load_accel_calibration(&mut flash_storage).unwrap_or_default();
+        flight::run_fusion_visualizer(sensor, int_pin, accel_bias).await;
+    }
 }

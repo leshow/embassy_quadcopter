@@ -27,6 +27,8 @@ ground_control = "build --manifest-path ground_control/Cargo.toml --target x86_6
 gc = "run --release --manifest-path ground_control/Cargo.toml --target x86_64-unknown-linux-gnu"
 visualize = "build --manifest-path visualizer/Cargo.toml --target x86_64-unknown-linux-gnu"
 erase-flash = "!espflash erase-region 0x10000 0x300000"
+# clears persisted accel calibration back to "uncalibrated" - see firmware/src/calibration_storage.rs
+erase-calibration = "!espflash erase-region 0x9000 0x6000"
 
 [env]
 DEFMT_LOG = "info"

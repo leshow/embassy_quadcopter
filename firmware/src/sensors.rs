@@ -204,30 +204,94 @@ impl<I: I2c> ImuRead for Sensor<Icm20948Driver<I2cInterface<I>>> {
 
 #[cfg(feature = "calibrate")]
 impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
-    pub async fn run_calibration(&mut self) -> ! {
-        //     loop {
-        //         let a = self.driver.read_accelerometer_raw().await;
-        //         let g = self.driver.read_gyroscope_raw().await;
-        //         let m = self.driver.read_magnetometer_raw().await;
-        //         match (a, g, m) {
-        //             (Ok(a), Ok(g), Ok((mx, my, mz))) => esp_println::println!(
-        //                 "Raw:{},{},{},{},{},{},{},{},{}",
-        //                 a.x, a.y, a.z, g.x, g.y, g.z, mx, my, mz
-        //             ),
-        //             (Err(e), _, _) => esp_println::println!("accel error: {:?}", e),
-        //             (_, Err(e), _) => esp_println::println!("gyro error: {:?}", e),
-        //             (_, _, Err(e)) => esp_println::println!("mag error: {:?}", e),
-        //         }
-        //         embassy_time::Timer::after(embassy_time::Duration::from_millis(20)).await;
-        //     }
-        // }
+    /// 6-orientation tumble calibration - flix's calibrateAccel/calibrateAccelOnce pattern.
+    /// Place the frame in each of the 6 orientations in turn; each one's averaged reading
+    /// updates a running per-axis min/max across all orientations seen so far. Whichever
+    /// orientation puts a given axis at +1g and whichever puts it at -1g (not necessarily
+    /// "level") together give that axis's bias (midpoint) and scale (half the swing) - no
+    /// single orientation needs to be precisely level.
+    pub async fn run_calibration(&mut self) -> crate::flight::AccelBias {
+        const SAMPLES: u32 = 1000;
+        const POSES: [&str; 6] = [
+            "level",
+            "nose up",
+            "nose down",
+            "right side down",
+            "left side down",
+            "upside down",
+        ];
 
-        loop {
-            match self.driver.read_magnetometer().await {
-                Ok(m) => defmt::debug!("{},{},{}", m.x, m.y, m.z),
-                Err(e) => defmt::error!("mag error: {}", defmt::Debug2Format(&e)),
+        // most sensitive range, for the best resolution on small deviations from 1g
+        if let Err(e) = self
+            .driver
+            .configure_accelerometer(AccelConfig {
+                full_scale: AccelFullScale::G2,
+                dlpf: AccelDlpf::Hz111,
+                dlpf_enable: true,
+                sample_rate_div: 1,
+            })
+            .await
+        {
+            defmt::error!(
+                "failed to switch to +/-2g range for calibration: {}",
+                defmt::Debug2Format(&e)
+            );
+        }
+
+        let mut acc_max = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut acc_min = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+
+        for pose in POSES {
+            defmt::info!("Place {} - 8s", pose);
+            embassy_time::Timer::after_secs(8).await;
+
+            let mut sum = Vector3::zeros();
+            for _ in 0..SAMPLES {
+                match self.driver.read_accelerometer().await {
+                    Ok(a) => sum += Vector3::new(a.x, a.y, a.z),
+                    Err(e) => defmt::error!(
+                        "accel read error during calibration: {}",
+                        defmt::Debug2Format(&e)
+                    ),
+                }
             }
-            embassy_time::Timer::after(embassy_time::Duration::from_millis(20)).await;
+            let avg = sum / SAMPLES as f32;
+
+            if avg.x > acc_max.x {
+                acc_max.x = avg.x;
+            }
+            if avg.y > acc_max.y {
+                acc_max.y = avg.y;
+            }
+            if avg.z > acc_max.z {
+                acc_max.z = avg.z;
+            }
+            if avg.x < acc_min.x {
+                acc_min.x = avg.x;
+            }
+            if avg.y < acc_min.y {
+                acc_min.y = avg.y;
+            }
+            if avg.z < acc_min.z {
+                acc_min.z = avg.z;
+            }
+
+            let bias = (acc_max + acc_min) / 2.0;
+            let scale = (acc_max - acc_min) / 2.0;
+            defmt::info!(
+                "running bias: {} {} {} scale: {} {} {}",
+                bias.x,
+                bias.y,
+                bias.z,
+                scale.x,
+                scale.y,
+                scale.z
+            );
+        }
+
+        crate::flight::AccelBias {
+            bias: (acc_max + acc_min) / 2.0,
+            scale: (acc_max - acc_min) / 2.0,
         }
     }
 }
