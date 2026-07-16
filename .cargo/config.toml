@@ -14,8 +14,8 @@ rustflags = [
 # c3
 build-c3 = "build -p embassy_quad --target riscv32imc-unknown-none-elf"
 flash-c3 = "run   -p embassy_quad --target riscv32imc-unknown-none-elf"
-build-c3-fusion = "build -p embassy_quad --target riscv32imc-unknown-none-elf --no-default-features --features c3,telemetry"
-flash-c3-fusion = "run -p embassy_quad --target riscv32imc-unknown-none-elf --no-default-features --features c3,telemetry"
+build-c3-dmp = "build -p embassy_quad --target riscv32imc-unknown-none-elf --no-default-features --features c3,dmp,telemetry"
+flash-c3-dmp = "run   -p embassy_quad --target riscv32imc-unknown-none-elf --no-default-features --features c3,dmp,telemetry"
 # c6
 build-c6 = "build -p embassy_quad --no-default-features --features c6 --target riscv32imac-unknown-none-elf"
 flash-c6 = "run   -p embassy_quad --no-default-features --features c6 --target riscv32imac-unknown-none-elf"

@@ -118,14 +118,16 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
                     ..Default::default()
                 })
                 .await?;
+            // driver
+            //     .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)
+            //     .await
+            //     .inspect_err(|e| {
+            //         defmt::error!(
+            //             "error initializing magnetometer: {}",
+            //             defmt::Debug2Format(e)
+            //         );
+            //     })?
         }
-
-        // driver
-        //     .init_magnetometer(MagConfig::default(), &mut embassy_time::Delay)
-        //     .await
-        //     .inspect_err(|e| {
-        //         defmt::error!("error during init_icm20948 {}", defmt::Debug2Format(e));
-        //     })?;
 
         #[cfg(feature = "dmp")]
         {
@@ -176,39 +178,12 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
         Ok(Self { driver })
     }
 
-    /// averages `samples` stationary raw gyro readings into a per-axis zero-rate offset, automatically to future read_gyroscope_* calls.
-    /// only requires the device to not be rotating, not to be level
-    pub async fn calibrate_gyroscope(
-        &mut self,
-        samples: u16,
-    ) -> Result<GyroCalibration, icm20948::Error<I::Error>> {
-        // matches icm20948-rs's own calibration_async example
-        self.driver
-            .calibrate_gyroscope_with_threshold(samples, 100)
-            .await
-    }
-
-    /// averages `samples` stationary raw accel readings into a per-axis offset
-    /// stored on the driver and applied automatically to future read_accelerometer calls.
-    /// requires the device LEVEL with Z pointing up
-    pub async fn calibrate_accelerometer(
-        &mut self,
-        samples: u16,
-    ) -> Result<AccelCalibration, icm20948::Error<I::Error>> {
-        // matches icm20948-rs's own calibration_async example
-        self.driver
-            .calibrate_accelerometer_with_threshold(samples, 10)
-            .await
-    }
-
-    #[cfg(feature = "dmp")]
     pub async fn read_dmp(
         &mut self,
     ) -> Result<Option<icm20948::dmp::DmpData>, icm20948::Error<I::Error>> {
         self.driver.dmp_read_fifo().await
     }
 
-    #[cfg(feature = "dmp")]
     pub async fn reset_fifo(&mut self) -> Result<(), icm20948::Error<I::Error>> {
         self.driver.reset_fifo().await
     }

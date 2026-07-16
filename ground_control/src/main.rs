@@ -5,7 +5,7 @@ use std::{net::UdpSocket, thread, time::Duration};
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use libs::control::ControlPacket;
 #[cfg(feature = "telemetry")]
-use libs::control::{TELEMETRY_SIZE, TelemetryPacket};
+use libs::control::{TelemetryPacket, TELEMETRY_SIZE};
 use tracing::{error, info, warn};
 
 fn main() -> anyhow::Result<()> {
@@ -100,9 +100,7 @@ fn main() -> anyhow::Result<()> {
                         if let Some(t) = TelemetryPacket::from_bytes(&tbuf) {
                             // log calibration start/stop
                             if t.calibrating() && !was_calibrating {
-                                warn!(
-                                    "=== CALIBRATING - hold still (gyro) / keep level and still (accel) ==="
-                                );
+                                warn!("=== CALIBRATING ===");
                             } else if !t.calibrating() && was_calibrating {
                                 info!("=== CALIBRATION COMPLETE ===");
                             }
@@ -111,9 +109,7 @@ fn main() -> anyhow::Result<()> {
                             // log calibration failed/recovered after arm/disarm
                             // accell never "recovers" if it failed on startup
                             if t.calibration_failed() && !was_cal_failed {
-                                error!(
-                                    "=== CALIBRATION FAILED - check device log for which sensor ==="
-                                );
+                                error!("=== CALIBRATION FAILED ===");
                             } else if !t.calibration_failed() && was_cal_failed {
                                 info!("=== CALIBRATION RECOVERED ===");
                             }

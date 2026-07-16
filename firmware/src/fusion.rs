@@ -595,6 +595,54 @@ impl ImuFusion for Fusion<ICM20948, Mahony> {
     }
 }
 
+// full MARG update (accel + gyro + mag) - gives yaw an absolute reference instead of pure
+// gyro integration. Madgwick/Vqf/Mahony all expose a matching update for the ICM20948
+pub(crate) trait MargFusion {
+    fn update(
+        &mut self,
+        dt: f32,
+        a: Vector3<f32>,
+        g: Vector3<f32>,
+        m: Vector3<f32>,
+    ) -> UnitQuaternion<f32>;
+}
+
+impl MargFusion for Fusion<ICM20948, Madgwick> {
+    fn update(
+        &mut self,
+        dt: f32,
+        a: Vector3<f32>,
+        g: Vector3<f32>,
+        m: Vector3<f32>,
+    ) -> UnitQuaternion<f32> {
+        Self::update(self, dt, a, g, m)
+    }
+}
+
+impl MargFusion for Fusion<ICM20948, Vqf> {
+    fn update(
+        &mut self,
+        dt: f32,
+        a: Vector3<f32>,
+        g: Vector3<f32>,
+        m: Vector3<f32>,
+    ) -> UnitQuaternion<f32> {
+        Self::update(self, dt, a, g, m)
+    }
+}
+
+impl MargFusion for Fusion<ICM20948, Mahony> {
+    fn update(
+        &mut self,
+        dt: f32,
+        a: Vector3<f32>,
+        g: Vector3<f32>,
+        m: Vector3<f32>,
+    ) -> UnitQuaternion<f32> {
+        Self::update(self, dt, a, g, m)
+    }
+}
+
 pub mod utils {
     /// Core complementary filter step. Alpha is the gyro trust weight (e.g. 0.98).
     pub fn complementary_filter(

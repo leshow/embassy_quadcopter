@@ -9,7 +9,7 @@ embassy-time = "0.5"
 esp-hal = { version = "1.1", features = ["unstable"] }
 esp-rtos = { version = "0.3", features = ["embassy", "esp-radio"] }
 esp-bootloader-esp-idf = { version = "0.5" }
-esp-backtrace = { version = "0.19", features = ["panic-handler", "defmt"] }
+esp-backtrace = { version = "0.19", features = ["panic-handler", "defmt", "custom-pre-backtrace", "custom-halt"] }
 esp-println = { version = "0.17", default-features = false, features = [
 	"jtag-serial",
 	"defmt-espflash",
@@ -36,7 +36,7 @@ nalgebra = { version = "0.35", default-features = false, features = [
 libs = { path = "../libs", default-features = false }
 
 [features]
-default = ["c3", "dmp", "telemetry"]
+default = ["c3", "telemetry"]
 calibrate = [
 ] # you will also have to manually edit the .cargo/config.toml to remove --monitor
 test_motors = []

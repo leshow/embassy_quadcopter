@@ -6,11 +6,14 @@ use libs::control::TelemetryPacket;
 use nalgebra::Quaternion;
 use nalgebra::{UnitQuaternion, Vector3};
 
-#[cfg(not(feature = "dmp"))]
-use crate::fusion::ImuFusion;
-#[cfg(not(feature = "dmp"))]
-use crate::sensors::ImuRead;
 use crate::{Motors, Sensor20948, fusion, wifi};
+#[cfg(feature = "dmp")]
+use crate::{fusion::MargFusion, sensors::ImuReadMag};
+#[cfg(not(feature = "dmp"))]
+use crate::{
+    fusion::{ImuFusion, MargFusion},
+    sensors::{ImuRead, ImuReadMag},
+};
 
 // publishes a telemetry snapshot for the wifi udp_task to reply with on the next control packet.
 // called once per loop iteration, from whichever exit point (early continue or full mix) is
@@ -41,15 +44,6 @@ async fn publish_telemetry(
     *wifi::TELEMETRY.lock().await = Some((pkt, Instant::now()));
 }
 
-/// publishes a placeholder telemetry snapshot flagged as calibrating, so ground control
-/// shows a live "calibrating" status
-#[cfg(all(feature = "telemetry", not(feature = "dmp")))]
-pub async fn publish_calibrating(armed: bool) {
-    let mut pkt = TelemetryPacket::new(0.0, 0.0, 0.0, (0, 0, 0, 0), armed, false);
-    pkt.set_calibrating(true);
-    *wifi::TELEMETRY.lock().await = Some((pkt, Instant::now()));
-}
-
 // calibrated_gyro is i16 at +/-2000 dps full scale, hardware DLPF at 51 Hz already applied
 #[cfg(feature = "dmp")]
 const GYRO_SCALE: f32 = 2000.0 * fusion::DEG_TO_RAD / 32768.0; // i16 → rad/s
@@ -58,15 +52,15 @@ const GYRO_SCALE: f32 = 2000.0 * fusion::DEG_TO_RAD / 32768.0; // i16 → rad/s
 const MAX_TILT_RAD: f32 = 25.0 * fusion::DEG_TO_RAD;
 
 // outer loop P gains
-const ANGLE_P_ROLL_PITCH: f32 = 6.0;
-const ANGLE_P_YAW: f32 = 2.0;
+const ANGLE_P_ROLL_PITCH: f32 = 6.0; // flix 6.0
+const ANGLE_P_YAW: f32 = 2.0; // flix 3.0
 
 // inner loop
-const RATE_KP_ROLL_PITCH: f32 = 0.05;
-const RATE_KI_ROLL_PITCH: f32 = 0.;
-const RATE_KD_ROLL_PITCH: f32 = 0.;
+const RATE_KP_ROLL_PITCH: f32 = 0.05; // flix 0.05
+const RATE_KI_ROLL_PITCH: f32 = 0.1; // flix 0.2
+const RATE_KD_ROLL_PITCH: f32 = 0.001; // flix 0.001
 
-const RATE_KP_YAW: f32 = 0.2;
+const RATE_KP_YAW: f32 = 0.2; // flix 0.3
 const RATE_KI_YAW: f32 = 0.0;
 const RATE_KD_YAW: f32 = 0.0;
 
@@ -132,6 +126,54 @@ impl Pid {
     fn reset(&mut self) {
         self.integral = 0.0;
         self.prev_error = f32::NAN;
+    }
+}
+
+#[cfg(not(feature = "dmp"))]
+mod gyro_bias {
+    use super::*;
+    // gyro bias re-zeroing gain and debounce, matching flix's gyroBiasFilter/landedDelay
+    const GYRO_BIAS_ALPHA: f32 = 0.001;
+    const LANDED_DEBOUNCE: Duration = Duration::from_secs(2);
+    const LANDED_ACCEL_TOLERANCE_G: f32 = 0.1; // +/- 10% of 1g
+
+    /// BiasTracker
+    ///
+    /// Continuously re-learns the gyro's zero-rate bias whenever the quad is sitting still
+    /// (flix's calibrateGyroOnce/landedDelay pattern). "Still" means disarmed and the accelerometer reads
+    /// close to 1g
+    pub struct BiasTracker {
+        bias: Vector3<f32>,
+        landed_since: Option<Instant>,
+    }
+
+    impl BiasTracker {
+        pub fn new() -> Self {
+            Self {
+                bias: Vector3::zeros(),
+                landed_since: None,
+            }
+        }
+
+        // returns the current bias estimate - subtract this from raw gyro readings
+        pub fn update(
+            &mut self,
+            armed: bool,
+            accel: Vector3<f32>,
+            gyro: Vector3<f32>,
+        ) -> Vector3<f32> {
+            let landed = !armed && (accel.norm() - 1.0).abs() < LANDED_ACCEL_TOLERANCE_G;
+            if !landed {
+                self.landed_since = None;
+                return self.bias;
+            }
+
+            let landed_since = *self.landed_since.get_or_insert_with(Instant::now);
+            if Instant::now().duration_since(landed_since) >= LANDED_DEBOUNCE {
+                self.bias += GYRO_BIAS_ALPHA * (gyro - self.bias);
+            }
+            self.bias
+        }
     }
 }
 
@@ -252,11 +294,15 @@ async fn read_dmp(
 async fn read_fusion<F: ImuFusion>(
     sensor: &mut Sensor20948<'_>,
     filter: &mut F,
+    gyro_bias: &mut gyro_bias::BiasTracker,
+    armed: bool,
     dt: f32,
     log_counter: &mut u32,
 ) -> Option<(UnitQuaternion<f32>, Vector3<f32>)> {
     match sensor.read().await {
         Ok((accel, gyro)) => {
+            let bias = gyro_bias.update(armed, accel, gyro);
+            let gyro = gyro - bias;
             let quat = filter.update_imu(dt, accel, gyro);
 
             *log_counter += 1;
@@ -272,6 +318,46 @@ async fn read_fusion<F: ImuFusion>(
                     roll * fusion::RAD_TO_DEG,
                     pitch * fusion::RAD_TO_DEG,
                     yaw * fusion::RAD_TO_DEG,
+                );
+            }
+            Some((quat, gyro))
+        }
+        Err(e) => {
+            defmt::error!("IMU read error: {}", defmt::Debug2Format(&e));
+            None
+        }
+    }
+}
+
+// MARG variant of read_fusion - adds the magnetometer so yaw has an absolute reference
+// instead of pure gyro integration. visualizer-only for now, not wired into run_control
+#[allow(dead_code)] // only called from run_fusion_visualizer, which needs the visualize feature
+async fn read_fusion_marg<F: MargFusion>(
+    sensor: &mut Sensor20948<'_>,
+    filter: &mut F,
+    dt: f32,
+    log_counter: &mut u32,
+) -> Option<(UnitQuaternion<f32>, Vector3<f32>)> {
+    match sensor.read_mag().await {
+        Ok((accel, gyro, mag)) => {
+            let quat = filter.update(dt, accel, gyro, mag);
+
+            *log_counter += 1;
+            if *log_counter >= crate::LOG_EVERY_N {
+                *log_counter = 0;
+                let (roll, pitch, yaw) = quat.euler_angles();
+                defmt::debug!(
+                    "marg w: {} x: {} y: {} z: {} | roll: {}° pitch: {}° yaw: {}° | mag x: {} y: {} z: {}",
+                    quat.w,
+                    quat.i,
+                    quat.j,
+                    quat.k,
+                    roll * fusion::RAD_TO_DEG,
+                    pitch * fusion::RAD_TO_DEG,
+                    yaw * fusion::RAD_TO_DEG,
+                    mag.x,
+                    mag.y,
+                    mag.z,
                 );
             }
             Some((quat, gyro))
@@ -299,12 +385,15 @@ pub async fn run_control(
     motors: Motors<'_>,
 ) {
     let mut log_counter: u32 = 0;
-    #[allow(unused)] // only mutated by the non-dmp arm block, only read when telemetry is on
-    let mut cal_failed = false;
+    // placeholder until accel calibration (behind the calibrate feature) can actually fail
+    #[allow(unused)]
+    let cal_failed = false;
     #[cfg(feature = "dmp")]
     let mut last_quat: Option<icm20948::dmp::Quaternion> = None;
     #[cfg(not(feature = "dmp"))]
     let mut fusion_filter = fusion::FusionBuilder::new().icm20948().madgwick().build();
+    #[cfg(not(feature = "dmp"))]
+    let mut gyro_bias = gyro_bias::BiasTracker::new();
 
     // inner rate PIDs
     let mut roll_pid = Pid::new(
@@ -338,24 +427,6 @@ pub async fn run_control(
         if !last_armed && armed {
             defmt::info!("ARMED");
 
-            // recalibrate gyro bias on every arm, not accel.
-            // DMP path skips this
-            #[cfg(not(feature = "dmp"))]
-            {
-                #[cfg(feature = "telemetry")]
-                publish_calibrating(armed).await;
-                match sensor.calibrate_gyroscope(200).await {
-                    Ok(_) => cal_failed = false,
-                    Err(e) => {
-                        defmt::warn!(
-                            "gyro recalibration on arm failed: {}",
-                            defmt::Debug2Format(&e)
-                        );
-                        cal_failed = true;
-                    }
-                }
-            }
-
             roll_pid.reset();
             pitch_pid.reset();
             yaw_pid.reset();
@@ -382,11 +453,19 @@ pub async fn run_control(
         #[cfg(not(feature = "dmp"))]
         let (quat, g, dt) = {
             let dt = dur_since(&mut last_instant);
-            let (quat, g) =
-                match read_fusion(&mut sensor, &mut fusion_filter, dt, &mut log_counter).await {
-                    Some(d) => d,
-                    None => continue,
-                };
+            let (quat, g) = match read_fusion(
+                &mut sensor,
+                &mut fusion_filter,
+                &mut gyro_bias,
+                armed,
+                dt,
+                &mut log_counter,
+            )
+            .await
+            {
+                Some(d) => d,
+                None => continue,
+            };
             (quat, g, dt)
         };
 
@@ -536,10 +615,21 @@ pub async fn run_dmp_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpio::
 pub async fn run_fusion_visualizer(mut sensor: Sensor20948<'_>, mut int_pin: gpio::Input<'static>) {
     let mut log_counter: u32 = 0;
     let mut fusion_filter = fusion::FusionBuilder::new().icm20948().madgwick().build();
+    let mut gyro_bias = GyroBiasTracker::new();
     let mut last_instant: Option<Instant> = None;
     loop {
         int_pin.wait_for_high().await;
         let dt = dur_since(&mut last_instant);
-        read_fusion(&mut sensor, &mut fusion_filter, dt, &mut log_counter).await;
+
+        read_fusion(
+            &mut sensor,
+            &mut fusion_filter,
+            &mut gyro_bias,
+            false, // no arming concept in the visualizer, motors never spin
+            dt,
+            &mut log_counter,
+        )
+        .await;
+        // read_fusion_marg(&mut sensor, &mut fusion_filter, dt, &mut log_counter).await;
     }
 }
