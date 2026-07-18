@@ -96,7 +96,7 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
             driver
                 .configure_gyroscope(GyroConfig {
                     full_scale: GyroFullScale::Dps500,
-                    dlpf: GyroDlpf::Hz51,
+                    dlpf: GyroDlpf::Hz197,
                     dlpf_enable: true,
                     sample_rate_div: 1,
                 })

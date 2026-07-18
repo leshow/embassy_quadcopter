@@ -46,6 +46,7 @@ pub struct MPU6050; // 6DOF: accel + gyro only
 pub struct Complementary {
     pub angle_roll: f32,  // radians, rotation around X axis
     pub angle_pitch: f32, // radians, rotation around Y axis
+    pub angle_yaw: f32, // radians, rotation around Z axis - only integrated by update_imu, since update derives yaw from the magnetometer instead
     pub alpha: f32,
 }
 
@@ -267,6 +268,7 @@ impl FusionBuilder<ICM20948, Complementary> {
             filter: Complementary {
                 angle_roll: 0.0,
                 angle_pitch: 0.0,
+                angle_yaw: 0.0,
                 alpha: self.alpha,
             },
             _sensor: PhantomData,
@@ -280,6 +282,7 @@ impl FusionBuilder<MPU6050, Complementary> {
             filter: Complementary {
                 angle_roll: 0.0,
                 angle_pitch: 0.0,
+                angle_yaw: 0.0,
                 alpha: self.alpha,
             },
             _sensor: PhantomData,
@@ -532,6 +535,30 @@ impl Fusion<MPU6050, Vqf> {
     }
 }
 
+impl Fusion<ICM20948, Complementary> {
+    /// IMU-only mode: no magnetometer, yaw is pure gyro integration and will drift.
+    /// Returns orientation as a quaternion.
+    pub fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+        let acc_roll = libm::atan2f(a.y, libm::sqrtf(a.x * a.x + a.z * a.z));
+        let acc_pitch = libm::atan2f(-a.x, libm::sqrtf(a.y * a.y + a.z * a.z));
+
+        let this = &mut self.filter;
+        (this.angle_roll, this.angle_pitch) = utils::complementary_filter(
+            this.angle_roll,
+            this.angle_pitch,
+            g.x,
+            g.y,
+            dt,
+            acc_roll,
+            acc_pitch,
+            this.alpha,
+        );
+        this.angle_yaw += g.z * dt; // no absolute reference without a mag reading, so this drifts
+
+        UnitQuaternion::from_euler_angles(this.angle_roll, this.angle_pitch, this.angle_yaw)
+    }
+}
+
 impl Fusion<ICM20948, Mahony> {
     /// 9DOF Mahony MARG via `uf-ahrs`.
     /// Returns orientation as a quaternion.
@@ -570,11 +597,16 @@ impl Fusion<MPU6050, Mahony> {
 }
 
 // generalizes "fuse one accel+gyro sample into an orientation" across whichever filter
-// FusionBuilder was configured with. Madgwick/Vqf/Mahony all expose a matching IMU-only
-// update_imu for the ICM20948; Complementary isn't included since its only ICM20948 impl
-// requires a magnetometer reading, which read_fusion below doesn't take.
+// FusionBuilder was configured with. Madgwick/Vqf/Mahony/Complementary all expose a matching
+// IMU-only update_imu for the ICM20948, so read_fusion below can stay generic over the filter.
 pub(crate) trait ImuFusion {
     fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32>;
+}
+
+impl ImuFusion for Fusion<ICM20948, Complementary> {
+    fn update_imu(&mut self, dt: f32, a: Vector3<f32>, g: Vector3<f32>) -> UnitQuaternion<f32> {
+        Self::update_imu(self, dt, a, g)
+    }
 }
 
 impl ImuFusion for Fusion<ICM20948, Madgwick> {
