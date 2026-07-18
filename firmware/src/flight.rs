@@ -64,6 +64,9 @@ const RATE_KP_YAW: f32 = 0.2; // flix 0.3
 const RATE_KI_YAW: f32 = 0.0;
 const RATE_KD_YAW: f32 = 0.0;
 
+// D-term low-pass cutoff ~40Hz at this port's ~550Hz loop rate (matches flix's pid.h alpha=0.2 at their ~1kHz loop)
+const RATE_D_LPF_ALPHA: f32 = 0.36;
+
 // max angle any single DMP sample can plausibly rotate by since the last accepted sample
 #[cfg(feature = "dmp")]
 const MAX_QUAT_JUMP_RAD: f32 = 60.0 * fusion::DEG_TO_RAD;
@@ -91,10 +94,14 @@ struct Pid {
     prev_error: f32,
     /// anti-windup clamp — keeps integral from growing unbounded
     integral_limit: f32,
+    /// D-term low-pass filter coefficient (0..1); 1.0 disables filtering
+    d_lpf_alpha: f32,
+    /// filtered derivative, carried between ticks
+    d_lpf_state: f32,
 }
 
 impl Pid {
-    const fn new(kp: f32, ki: f32, kd: f32, integral_limit: f32) -> Self {
+    const fn new(kp: f32, ki: f32, kd: f32, integral_limit: f32, d_lpf_alpha: f32) -> Self {
         Self {
             kp,
             ki,
@@ -102,6 +109,8 @@ impl Pid {
             integral: 0.0,
             prev_error: f32::NAN,
             integral_limit,
+            d_lpf_alpha,
+            d_lpf_state: 0.0,
         }
     }
 
@@ -113,11 +122,14 @@ impl Pid {
         }
         self.integral =
             (self.integral + error * dt).clamp(-self.integral_limit, self.integral_limit);
-        // no software LPF on derivative — hardware DLPF at 51 Hz handles it
         let derivative = if self.prev_error.is_nan() {
             0.0
         } else {
-            (error - self.prev_error) / dt
+            let raw = (error - self.prev_error) / dt;
+            // low-pass just the derivative - keeps noise out of the D-term without
+            // delaying P/I, matching flix's dedicated D-term filter (pid.h)
+            self.d_lpf_state += self.d_lpf_alpha * (raw - self.d_lpf_state);
+            self.d_lpf_state
         };
         self.prev_error = error;
         self.kp * error + self.ki * self.integral + self.kd * derivative
@@ -126,6 +138,7 @@ impl Pid {
     fn reset(&mut self) {
         self.integral = 0.0;
         self.prev_error = f32::NAN;
+        self.d_lpf_state = 0.0;
     }
 }
 
@@ -434,14 +447,17 @@ pub async fn run_control(
         RATE_KI_ROLL_PITCH,
         RATE_KD_ROLL_PITCH,
         0.3,
+        RATE_D_LPF_ALPHA,
     );
     let mut pitch_pid = Pid::new(
         RATE_KP_ROLL_PITCH,
         RATE_KI_ROLL_PITCH,
         RATE_KD_ROLL_PITCH,
         0.3,
+        RATE_D_LPF_ALPHA,
     );
-    let mut yaw_pid = Pid::new(RATE_KP_YAW, RATE_KI_YAW, RATE_KD_YAW, 0.3);
+    // yaw D-gain is 0 anyway, so no filtering needed - alpha=1.0 passes the raw derivative through
+    let mut yaw_pid = Pid::new(RATE_KP_YAW, RATE_KI_YAW, RATE_KD_YAW, 0.3, 1.0);
 
     let mut target_yaw: f32 = 0.0;
     let mut yaw_init = false;
@@ -605,8 +621,16 @@ pub async fn run_control(
         // }
 
         let (dfl, dfr, drl, drr) = motors.set_motors(fl, fr, rl, rr);
+        // temporary: pinpointing a roll/pitch torque swap - att_err/g are the two inputs feeding
+        // roll_torque/pitch_torque, so comparing all of them shows exactly where a swap enters
         defmt::trace!(
-            "torques roll={} pitch={} yaw={} | mix fl={} fr={} rl={} rr={} | duty fl={} fr={} rl={} rr={}",
+            "att_err x={} y={} | gyro x={} y={} | rate_sp roll={} pitch={} | torques roll={} pitch={} yaw={} | mix fl={} fr={} rl={} rr={} | duty fl={} fr={} rl={} rr={}",
+            att_err.x,
+            att_err.y,
+            g.x,
+            g.y,
+            roll_rate_sp,
+            pitch_rate_sp,
             roll_torque,
             pitch_torque,
             yaw_torque,
