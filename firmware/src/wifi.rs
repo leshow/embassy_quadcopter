@@ -8,9 +8,7 @@ use embassy_net::{
     Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4,
     udp::{PacketMetadata, UdpSocket},
 };
-use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, pubsub::PubSubChannel,
-};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use embassy_time::Instant;
 use esp_hal::{peripherals::WIFI, rng::Rng};
 use esp_radio::wifi::{
