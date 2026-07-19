@@ -1,7 +1,7 @@
 use embassy_time::{Duration, Instant};
 use esp_hal::gpio;
 #[cfg(feature = "telemetry")]
-use libs::control::TelemetryPacket;
+use libs::telemetry::TelemetryPacket;
 #[cfg(feature = "dmp")]
 use nalgebra::Quaternion;
 use nalgebra::{UnitQuaternion, Vector3};
@@ -26,7 +26,6 @@ async fn publish_telemetry(
     armed: bool,
     failsafe: bool,
     gyro: Vector3<f32>,
-    cal_failed: bool,
 ) {
     let roll_deg = euler.0 * fusion::RAD_TO_DEG;
     let pitch_deg = euler.1 * fusion::RAD_TO_DEG;
@@ -36,10 +35,9 @@ async fn publish_telemetry(
     let _ = &gyro;
 
     #[cfg(not(feature = "telemetry-verbose"))]
-    let mut pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe);
+    let pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe);
     #[cfg(feature = "telemetry-verbose")]
-    let mut pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe, gyro);
-    pkt.set_calibration_failed(cal_failed);
+    let pkt = TelemetryPacket::new(roll_deg, pitch_deg, yaw_deg, motors, armed, failsafe, gyro);
 
     *wifi::TELEMETRY.lock().await = Some((pkt, Instant::now()));
 }
@@ -419,8 +417,6 @@ pub async fn run_control(
 ) {
     let mut log_counter: u32 = 0;
     // placeholder until accel calibration (behind the calibrate feature) can actually fail
-    #[allow(unused)]
-    let cal_failed = false;
     #[cfg(feature = "dmp")]
     let mut last_quat: Option<icm20948::dmp::Quaternion> = None;
     #[cfg(not(feature = "dmp"))]
@@ -510,7 +506,7 @@ pub async fn run_control(
             Some((p, _)) => p,
             None => {
                 #[cfg(feature = "telemetry")]
-                publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g, cal_failed).await;
+                publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
                 continue;
             }
         };
@@ -544,46 +540,46 @@ pub async fn run_control(
             0.0
         };
 
-        // target roll/pitch, kept as plain angles rather than a quaternion - see note below
-        let target_roll = pkt.roll * MAX_TILT_RAD;
-        let target_pitch = pkt.pitch * MAX_TILT_RAD;
-        // include yaw version:
-        //  // build target attitude quaternion from stick angles (flix Quaternion::fromEuler)
-        //         let target_quat = UnitQuaternion::from_euler_angles(
-        //             pkt.roll * MAX_TILT_RAD,
-        //             pkt.pitch * MAX_TILT_RAD,
-        //             target_yaw,
-        //         );
-
         // like controlTorque / motor mixing (flix)
         if t < 0.05 {
             motors.turn_off();
             #[cfg(feature = "telemetry")]
-            publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g, cal_failed).await;
+            publish_telemetry(euler, (0, 0, 0, 0), armed, !fresh, g).await;
             continue;
         }
 
         // outer PID:
-        // roll/pitch error from decomposed Euler angles instead of the up-vector cross product
-        // (flix rotationVectorBetween) commented out below. the cross product computes error
-        // from the full orientation quaternion (all of w,x,y,z), so without a magnetometer, yaw
-        // drift leaks into roll/pitch error - confirmed via tethered testing, where ~58deg of
-        // accumulated yaw drift produced a full roll/pitch swap in the motor mix. euler_angles()
-        // decomposes each axis independently, so yaw drift can't couple in - matches
-        // peterkrull/quad's task_state_estimator.rs + task_attitude_controller.rs, which uses
-        // the same decomposed-angle approach for exactly this reason
+        // with quaternions:
+        // build target attitude quaternion from stick angles (flix Quaternion::fromEuler)
+        // let target_quat = UnitQuaternion::from_euler_angles(
+        //     pkt.roll * MAX_TILT_RAD,
+        //     pkt.pitch * MAX_TILT_RAD,
+        //     target_yaw,
+        // );
+        // // up-vector cross product gives roll/pitch error (flix rotationVectorBetween)
+        // // arg order matches flix: actual * target (swapped gives negated error vector)
+        // let up = Vector3::z();
+        // let att_err = quat
+        //     .transform_vector(&up)
+        //     .cross(&target_quat.transform_vector(&up)); // flix Vector::rotationVectorBetween - cross product of two up-vectors gives the attitude error
+        // let roll_rate_sp = ANGLE_P_ROLL_PITCH * att_err.x;
+        // let pitch_rate_sp = ANGLE_P_ROLL_PITCH * att_err.y;
+        // let yaw_rate_sp = ANGLE_P_YAW * wrap_angle(target_yaw - actual_yaw) + yaw_ff;
+
+        // alternative: roll/pitch error from decomposed Euler angles instead of the up-vector
+        // cross product above. the cross product computes error from the full orientation
+        // quaternion (all of w,x,y,z), so without a magnetometer, yaw drift leaks into roll/pitch
+        // error - confirmed via tethered testing, where ~58deg of accumulated yaw drift produced
+        // a full roll/pitch swap in the motor mix. euler_angles() decomposes each axis
+        // independently, so yaw drift can't couple in - matches peterkrull/quad's
+        // task_state_estimator.rs + task_attitude_controller.rs, which uses this approach.
+        // to switch: comment out the att_err block above (through yaw_rate_sp) and uncomment this:
+        let target_roll = pkt.roll * MAX_TILT_RAD;
+        let target_pitch = pkt.pitch * MAX_TILT_RAD;
         let (actual_roll, actual_pitch, _) = euler;
         let roll_rate_sp = ANGLE_P_ROLL_PITCH * wrap_angle(target_roll - actual_roll);
         let pitch_rate_sp = ANGLE_P_ROLL_PITCH * wrap_angle(target_pitch - actual_pitch);
         let yaw_rate_sp = ANGLE_P_YAW * wrap_angle(target_yaw - actual_yaw) + yaw_ff;
-
-        // let target_quat = UnitQuaternion::from_euler_angles(target_roll, target_pitch, target_yaw);
-        // let up = Vector3::z();
-        // let att_err = quat
-        //     .transform_vector(&up)
-        //     .cross(&target_quat.transform_vector(&up)); // flix Vector::rotationVectorBetween
-        // let roll_rate_sp = ANGLE_P_ROLL_PITCH * att_err.x;
-        // let pitch_rate_sp = ANGLE_P_ROLL_PITCH * att_err.y;
 
         // inner PID:
         // like controlRates (flix)
@@ -644,7 +640,6 @@ pub async fn run_control(
             armed,
             false,
             g,
-            cal_failed,
         )
         .await;
     }

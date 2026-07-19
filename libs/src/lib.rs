@@ -22,7 +22,10 @@ pub fn get_port() -> u16 {
         .unwrap_or(UDP_PORT_DEFAULT)
 }
 
+pub mod calibrate;
 pub mod control;
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
 
 #[cfg(test)]
 mod tests {

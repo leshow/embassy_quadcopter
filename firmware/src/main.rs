@@ -115,7 +115,11 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     #[cfg(not(feature = "visualize"))]
-    AP::init(peripherals.WIFI, spawner).await.listen(spawner);
+    let ap = AP::init(peripherals.WIFI, spawner).await;
+    #[cfg(not(any(feature = "calibrate", feature = "visualize")))]
+    ap.listen_control(spawner);
+    #[cfg(feature = "calibrate")]
+    ap.listen_calibrate(spawner);
 
     let i2c = I2c::new(
         peripherals.I2C0,
@@ -127,7 +131,7 @@ async fn main(spawner: Spawner) {
     .into_async();
 
     // Wait for ICM20948 to power up before init
-    Timer::after_millis(100).await;
+    Timer::after_millis(500).await;
 
     #[cfg(not(any(feature = "calibrate", feature = "visualize")))]
     {
@@ -154,11 +158,19 @@ async fn main(spawner: Spawner) {
         let accel_bias = sensor.run_calibration().await;
 
         let mut flash_storage = esp_storage::FlashStorage::new(peripherals.FLASH);
-        if calibration_storage::store_accel_calibration(&mut flash_storage, &accel_bias) {
+        let saved = calibration_storage::store_accel_calibration(&mut flash_storage, &accel_bias);
+        let mode = if saved {
             defmt::info!("calibration saved: {}", defmt::Debug2Format(&accel_bias));
+            libs::calibrate::CalibrationMode::Ended
         } else {
             defmt::error!("failed to save calibration to flash");
-        }
+            libs::calibrate::CalibrationMode::Failed
+        };
+        wifi::calibrate::EVENTS
+            .publisher()
+            .expect("calibration publisher already taken")
+            .publish(mode)
+            .await;
     }
 
     #[cfg(feature = "visualize")]
