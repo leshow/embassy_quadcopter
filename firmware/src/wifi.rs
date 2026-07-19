@@ -15,9 +15,9 @@ use esp_radio::wifi::{
     AccessPointStationEventInfo, AuthenticationMethod, Config, ControllerConfig, Interface,
     WifiController, ap::AccessPointConfig,
 };
-#[cfg(feature = "telemetry")]
-use libs::control::TelemetryPacket;
 use libs::control::{self, ControlPacket};
+#[cfg(feature = "telemetry")]
+use libs::telemetry::TelemetryPacket;
 use static_cell::StaticCell;
 
 // latest control input from ground control, stamped at receive time for failsafe
@@ -91,8 +91,15 @@ impl AP {
     }
 
     /// Spawn the UDP listener task — updates CONTROLS on each valid packet
-    pub fn listen(&self, spawner: Spawner) {
-        spawner.spawn(udp_task(self.stack).expect("udp_task already spawned"));
+    pub fn listen_control(&self, spawner: Spawner) {
+        spawner.spawn(udp_control_task(self.stack).expect("udp_task already spawned"));
+    }
+
+    /// Spawn the UDP task that waits for ground_control to say "start calibrating", then
+    /// forwards pose updates from `sensors::run_calibration` back over UDP.
+    #[cfg(feature = "calibrate")]
+    pub fn listen_calibrate(&self, spawner: Spawner) {
+        spawner.spawn(calibrate::task(self.stack).expect("calibrate_task already spawned"));
     }
 }
 
@@ -117,8 +124,7 @@ async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     runner.run().await
 }
 
-#[embassy_executor::task]
-async fn udp_task(stack: Stack<'static>) {
+fn udp_soc(stack: Stack<'static>) -> UdpSocket<'static> {
     let rx_meta = mk_static!([PacketMetadata; 4], [PacketMetadata::EMPTY; 4]);
     let rx_buf = mk_static!([u8; 512], [0u8; 512]);
     let tx_meta = mk_static!([PacketMetadata; 4], [PacketMetadata::EMPTY; 4]);
@@ -133,10 +139,15 @@ async fn udp_task(stack: Stack<'static>) {
     let mut socket = UdpSocket::new(stack, rx_meta, rx_buf, tx_meta, tx_buf);
     socket.bind(port).expect("UDP bind failed");
     defmt::info!("UDP listening on port {}", libs::UDP_PORT_DEFAULT);
+    socket
+}
 
+#[embassy_executor::task]
+async fn udp_control_task(stack: Stack<'static>) {
+    let soc = udp_soc(stack);
     let mut buf = [0u8; control::DEFAULT_SIZE]; // sized to exact packet
     loop {
-        match socket.recv_from(&mut buf).await {
+        match soc.recv_from(&mut buf).await {
             Ok((n, meta)) if n == control::DEFAULT_SIZE => {
                 if let Some(packet) = ControlPacket::from_bytes(&buf) {
                     defmt::trace!("packet received {:?}", defmt::Debug2Format(&packet));
@@ -144,7 +155,7 @@ async fn udp_task(stack: Stack<'static>) {
                 }
                 #[cfg(feature = "telemetry")]
                 if let Some((pkt, _ts)) = *TELEMETRY.lock().await
-                    && let Err(err) = socket.send_to(&pkt.to_bytes(), meta.endpoint).await
+                    && let Err(err) = soc.send_to(&pkt.to_bytes(), meta.endpoint).await
                 {
                     defmt::warn!(
                         "failed to sent telemetry packet: {:?}",
@@ -156,6 +167,60 @@ async fn udp_task(stack: Stack<'static>) {
             }
             Ok((n, _)) => defmt::warn!("unexpected UDP packet size: {}", n),
             Err(_) => {}
+        }
+    }
+}
+
+#[cfg(feature = "calibrate")]
+pub mod calibrate {
+    use embassy_net::{IpEndpoint, Stack};
+    use embassy_sync::{
+        blocking_mutex::raw::CriticalSectionRawMutex, pubsub::PubSubChannel, signal::Signal,
+    };
+    use libs::{
+        calibrate::CalibrationMode,
+        control::{self, ControlPacket},
+    };
+
+    // fires once we get task hears from ground_control
+    // unblocking run_calibration to start the pose sequence
+    pub static START: Signal<CriticalSectionRawMutex, IpEndpoint> = Signal::new();
+
+    // pose transitions published by run_calibration, forwarded to ground_control here
+    pub static EVENTS: PubSubChannel<CriticalSectionRawMutex, CalibrationMode, 8, 1, 1> =
+        PubSubChannel::new();
+
+    #[embassy_executor::task]
+    pub(crate) async fn task(stack: Stack<'static>) {
+        let soc = super::udp_soc(stack);
+
+        // subscribe before signaling START
+        let mut sub = EVENTS
+            .subscriber()
+            .expect("calibration subscriber already taken");
+
+        // any valid control packet is the trigger
+        let mut buf = [0u8; control::DEFAULT_SIZE];
+        let endpoint = loop {
+            match soc.recv_from(&mut buf).await {
+                Ok((n, meta))
+                    if n == control::DEFAULT_SIZE && ControlPacket::from_bytes(&buf).is_some() =>
+                {
+                    break meta.endpoint;
+                }
+                _ => {}
+            }
+        };
+        START.signal(endpoint); // START CAlIBRATION!!
+
+        loop {
+            let mode = sub.next_message_pure().await;
+            if let Err(err) = soc.send_to(&mode.to_bytes(), endpoint).await {
+                defmt::warn!(
+                    "failed to send calibration status: {:?}",
+                    defmt::Debug2Format(&err)
+                );
+            }
         }
     }
 }

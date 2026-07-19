@@ -211,15 +211,24 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
     /// "level") together give that axis's bias (midpoint) and scale (half the swing) - no
     /// single orientation needs to be precisely level.
     pub async fn run_calibration(&mut self) -> crate::flight::AccelBias {
+        use libs::calibrate::CalibrationMode;
+
         const SAMPLES: u32 = 1000;
-        const POSES: [&str; 6] = [
-            "level",
-            "nose up",
-            "nose down",
-            "right side down",
-            "left side down",
-            "upside down",
+        const POSES: [CalibrationMode; 6] = [
+            CalibrationMode::Level,
+            CalibrationMode::FrontUp,
+            CalibrationMode::BackUp,
+            CalibrationMode::RightSide,
+            CalibrationMode::LeftSide,
+            CalibrationMode::UpsideDown,
         ];
+
+        // wait for ground_control to start
+        defmt::info!("waiting for ground_control to start calibration");
+        crate::wifi::calibrate::START.wait().await;
+        let publisher = crate::wifi::calibrate::EVENTS
+            .publisher()
+            .expect("calibration publisher already taken");
 
         // most sensitive range, for the best resolution on small deviations from 1g
         if let Err(e) = self
@@ -240,10 +249,12 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
 
         let mut acc_max = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
         let mut acc_min = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+        const POSE_HOLD_SECS: u64 = 15;
 
         for pose in POSES {
-            defmt::info!("Place {} - 8s", pose);
-            embassy_time::Timer::after_secs(8).await;
+            defmt::info!("Place {} - {}s", pose.name(), POSE_HOLD_SECS);
+            publisher.publish(pose).await;
+            embassy_time::Timer::after_secs(POSE_HOLD_SECS).await;
 
             let mut sum = Vector3::zeros();
             for _ in 0..SAMPLES {

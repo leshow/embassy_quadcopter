@@ -1,15 +1,21 @@
-#[cfg(feature = "telemetry")]
 use std::io::ErrorKind;
 use std::{net::UdpSocket, thread, time::Duration};
 
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
-use libs::control::ControlPacket;
 #[cfg(feature = "telemetry")]
-use libs::control::{TelemetryPacket, TELEMETRY_SIZE};
+use libs::telemetry::{TELEMETRY_SIZE, TelemetryPacket};
+use libs::{
+    calibrate::{CALIBRATION_SIZE, CalibrationMode},
+    control::ControlPacket,
+};
 use tracing::{error, info, warn};
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+
+    if std::env::args().any(|a| a == "--calibrate") {
+        return run_calibrate();
+    }
 
     let mut gilrs = Gilrs::new().map_err(|e| anyhow::anyhow!("{}", e))?;
     info!("starting up ground_control");
@@ -38,10 +44,6 @@ fn main() -> anyhow::Result<()> {
         };
 
         let mut pkt = ControlPacket::new(0, 0.0, 0.0, 0.0, false);
-        #[cfg(feature = "telemetry")]
-        let mut was_calibrating = false;
-        #[cfg(feature = "telemetry")]
-        let mut was_cal_failed = false;
         // only log the routine telemetry line when something actually changed
         #[cfg(feature = "telemetry")]
         let mut last_telemetry: Option<TelemetryPacket> = None;
@@ -55,7 +57,6 @@ fn main() -> anyhow::Result<()> {
             // control packets still get sent every 20ms and we get telemetry data
             {
                 match event {
-                    // upper half only: center = 0%, full up = 100%
                     EventType::AxisChanged(Axis::LeftStickY, value, _) => {
                         pkt.throttle = (value.max(0.0) * 100.0) as u8;
                         info!("throttle: {}", pkt.throttle);
@@ -98,48 +99,27 @@ fn main() -> anyhow::Result<()> {
                 match socket.recv(&mut tbuf) {
                     Ok(n) if n == TELEMETRY_SIZE => {
                         if let Some(t) = TelemetryPacket::from_bytes(&tbuf) {
-                            // log calibration start/stop
-                            if t.calibrating() && !was_calibrating {
-                                warn!("=== CALIBRATING ===");
-                            } else if !t.calibrating() && was_calibrating {
-                                info!("=== CALIBRATION COMPLETE ===");
-                            }
-                            was_calibrating = t.calibrating();
-
-                            // log calibration failed/recovered after arm/disarm
-                            // accell never "recovers" if it failed on startup
-                            if t.calibration_failed() && !was_cal_failed {
-                                error!("=== CALIBRATION FAILED ===");
-                            } else if !t.calibration_failed() && was_cal_failed {
-                                info!("=== CALIBRATION RECOVERED ===");
-                            }
-                            was_cal_failed = t.calibration_failed();
-
                             if last_telemetry != Some(t) {
                                 #[cfg(not(feature = "telemetry-verbose"))]
                                 let msg = format!(
-                                    "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} calibrating={} calibration_failed={} motors={:?}",
+                                    "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} motors={:?}",
                                     t.roll,
                                     t.pitch,
                                     t.yaw,
                                     t.armed(),
                                     t.failsafe(),
                                     t.fifo_overflow(),
-                                    t.calibrating(),
-                                    t.calibration_failed(),
                                     t.motors
                                 );
                                 #[cfg(feature = "telemetry-verbose")]
                                 let msg = format!(
-                                    "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} calibrating={} calibration_failed={} motors={:?} gyro={:?}",
+                                    "telemetry: roll={:.1} pitch={:.1} yaw={:.1} armed={} failsafe={} fifo_overflow={} motors={:?} gyro={:?}",
                                     t.roll,
                                     t.pitch,
                                     t.yaw,
                                     t.armed(),
                                     t.failsafe(),
                                     t.fifo_overflow(),
-                                    t.calibrating(),
-                                    t.calibration_failed(),
                                     t.motors,
                                     t.gyro
                                 );
@@ -158,6 +138,48 @@ fn main() -> anyhow::Result<()> {
                     Err(e) => info!("telemetry recv error: {e}"),
                 }
             }
+        }
+    }
+}
+
+// the firmware only speaks this protocol while it's running `--features calibrate`. any
+// ControlPacket is treated by the firmware as "start calibrating", so send one and keep
+// resending until we hear back, in case the first one is dropped.
+fn run_calibrate() -> anyhow::Result<()> {
+    let (ip, port) = (libs::get_ip(), libs::get_port());
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.connect((ip, port))?;
+    socket.set_read_timeout(Some(Duration::from_millis(500)))?;
+    info!("connected to {ip}:{port} - waiting to start calibration");
+
+    let start = ControlPacket::new(0, 0.0, 0.0, 0.0, false);
+    let mut buf = [0u8; CALIBRATION_SIZE];
+    let mut started = false;
+    loop {
+        if !started {
+            socket.send(&start.to_bytes())?;
+        }
+        match socket.recv(&mut buf) {
+            Ok(n) if n == CALIBRATION_SIZE => {
+                started = true;
+                let Some(mode) = CalibrationMode::from_bytes(&buf) else {
+                    continue;
+                };
+                match mode {
+                    CalibrationMode::Ended => {
+                        info!("=== CALIBRATION COMPLETE - saved ===");
+                        return Ok(());
+                    }
+                    CalibrationMode::Failed => {
+                        error!("=== CALIBRATION FAILED - not saved ===");
+                        return Ok(());
+                    }
+                    pose => warn!("place: {pose}"),
+                }
+            }
+            Ok(_) => {}
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(e) => return Err(e.into()),
         }
     }
 }
