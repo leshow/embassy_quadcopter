@@ -5,7 +5,7 @@ use std::{net::UdpSocket, thread, time::Duration};
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use libs::control::ControlPacket;
 #[cfg(feature = "telemetry")]
-use libs::control::{TelemetryPacket, TELEMETRY_SIZE};
+use libs::control::{TELEMETRY_SIZE, TelemetryPacket};
 use tracing::{error, info, warn};
 
 fn main() -> anyhow::Result<()> {
