@@ -91,12 +91,12 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
                 })
                 .await?;
             // 500deg/s gives finer resolution than 2000dps for stable hover corrections;
-            // Hz51 DLPF matches the DMP path's filtering so the rate PID's D-term
-            // behaves the same regardless of which sensor source feeds it
+            // Hz197 keeps gyro delay low (flix runs its MPU9250 at ~184Hz for the same reason);
+            // noise is filtered separately, only on the rate PID's D-term, see Pid::update
             driver
                 .configure_gyroscope(GyroConfig {
                     full_scale: GyroFullScale::Dps500,
-                    dlpf: GyroDlpf::Hz51,
+                    dlpf: GyroDlpf::Hz197,
                     dlpf_enable: true,
                     sample_rate_div: 1,
                 })
@@ -242,8 +242,8 @@ impl<I: I2c> Sensor<Icm20948Driver<I2cInterface<I>>> {
         let mut acc_min = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
 
         for pose in POSES {
-            defmt::info!("Place {} - 8s", pose);
-            embassy_time::Timer::after_secs(8).await;
+            defmt::info!("Place {} - 15s", pose);
+            embassy_time::Timer::after_secs(15).await;
 
             let mut sum = Vector3::zeros();
             for _ in 0..SAMPLES {
