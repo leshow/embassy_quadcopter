@@ -18,7 +18,13 @@ use libs::flight::{
 use nalgebra::Vector3;
 
 mod vals {
-    use libs::flight::fusion;
+    use libs::flight::{filters, fusion};
+
+    // icm426xx scales raw counts by STD_GRAVITY internally, so Sensor::read hands back m/s^2, not
+    // g like the esp32-s3's driver does.
+    const ONE_G: f32 = 9.80665;
+    pub const ACCEL_MIN: f32 = filters::ACCEL_HEALTHY_MIN * ONE_G;
+    pub const ACCEL_MAX: f32 = filters::ACCEL_HEALTHY_MAX * ONE_G;
 
     // max roll/pitch command from stick (+/- 25 deg)
     pub const MAX_TILT_RAD: f32 = 25.0 * fusion::DEG_TO_RAD;
@@ -66,7 +72,7 @@ mod util {
         }
     }
 
-    // normalises an angle to [-pi, pi] for the shortest-path yaw error
+    /// normalises an angle to [-pi, pi] for the shortest-path
     pub(crate) fn wrap_angle(a: f32) -> f32 {
         use core::f32::consts::PI;
         // fmodf gives the same sign as the dividend, so shift into [0, 2pi) before subtracting back
@@ -74,8 +80,8 @@ mod util {
         (if r < 0.0 { r + 2.0 * PI } else { r }) - PI
     }
 
-    // running min/max/avg of loop dt between periodic log lines - lets the actual loop rate be
-    // checked without needing per-tick logging
+    /// running min/max/avg of loop dt between periodic log lines - lets the actual loop rate be
+    /// checked without needing per-tick logging
     pub struct DtStats {
         pub min: f32,
         pub max: f32,
@@ -181,7 +187,7 @@ pub async fn run<'a, D>(
         // can't be trusted as "down" no matter how smooth it is. feeding zeros makes madgwick
         // treat it as "no accel this tick" and coast on gyro integration instead of being pulled
         // by a bad reference
-        let accel = if (filters::ACCEL_HEALTHY_MIN..=filters::ACCEL_HEALTHY_MAX).contains(&{
+        let accel = if (vals::ACCEL_MIN..=vals::ACCEL_MAX).contains(&{
             let accel_norm = accel.norm();
             accel_stats.record(accel_norm);
             accel_norm
