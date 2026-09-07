@@ -27,6 +27,9 @@ pub const ACCEL_LPF_HZ: f32 = 25.0;
 // this tick. matches betaflight's imuIsAccelerometerHealthy() (0.9g-1.1g) - confirmed on our
 // own hardware tonight: clean readings sit within ~1% of 1g, corrupted ones swing far outside
 // this band (measured as low as 0.145g, as high as 1.944g during real vibration)
+// expressed as a ratio to 1g, so callers scale them to whatever units their driver reports in.
+// this is the only place anything looks at absolute accel magnitude - madgwick normalizes the
+// vector internally and Lpf3 is linear, so nothing else depends on the unit
 pub const ACCEL_HEALTHY_MIN: f32 = 0.9;
 pub const ACCEL_HEALTHY_MAX: f32 = 1.1;
 

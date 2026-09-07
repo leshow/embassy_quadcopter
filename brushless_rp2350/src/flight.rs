@@ -26,11 +26,11 @@ mod vals {
     pub const ACCEL_MIN: f32 = filters::ACCEL_HEALTHY_MIN * ONE_G;
     pub const ACCEL_MAX: f32 = filters::ACCEL_HEALTHY_MAX * ONE_G;
 
-    // max roll/pitch command from stick (+/- 25 deg)
-    pub const MAX_TILT_RAD: f32 = 25.0 * fusion::DEG_TO_RAD;
+    // scales max tilt between 0 to MAX_TILT_RAD
+    pub const MAX_TILT_RAD: f32 = 45.0 * fusion::DEG_TO_RAD;
 
     // outer loop p gains
-    pub const ANGLE_P_ROLL_PITCH: f32 = 2.0;
+    pub const ANGLE_P_ROLL_PITCH: f32 = 3.0;
     // and angle_p_yaw means the controller will eventually torque
     // quad to chase drift
     pub const ANGLE_P_YAW: f32 = 0.0;
@@ -43,7 +43,7 @@ mod vals {
     pub const RATE_KI_ROLL_PITCH: f32 = 0.0; // was 0.3
     pub const RATE_KD_ROLL_PITCH: f32 = 0.0; // was 0.001
 
-    pub const RATE_KP_YAW: f32 = 0.0; // flix 0.3 was set to 0.2
+    pub const RATE_KP_YAW: f32 = 0.1; // flix 0.3 was set to 0.2
     pub const RATE_KI_YAW: f32 = 0.0; // was 0.05
     pub const RATE_KD_YAW: f32 = 0.0; // was 0.001
 
